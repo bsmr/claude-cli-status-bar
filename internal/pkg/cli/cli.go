@@ -1,0 +1,264 @@
+// Package cli is ccsb's command dispatcher.
+//
+// Without arguments it runs the proxy/fallback statusLine flow used by
+// Claude Code. With a subcommand it manages the install/uninstall/status of
+// the ~/.claude/settings.json hook.
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/capture"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/statusline"
+)
+
+// Paths bundles the filesystem locations ccsb needs at runtime. They are
+// supplied by the caller (resolved from the environment) rather than read
+// inside this package so tests can inject temporary paths.
+type Paths struct {
+	Settings string // ~/.claude/settings.json
+	Config   string // $XDG_CONFIG_HOME/ccsb/config.json
+	Capture  string // $XDG_STATE_HOME/ccsb/captures
+	Self     string // absolute path of the running ccsb binary
+}
+
+// Env carries the environment values used to derive Paths.
+type Env struct {
+	Home          string
+	XDGConfigHome string
+	XDGStateHome  string
+	Self          string
+}
+
+// ResolvePaths derives Paths from environment values.
+func ResolvePaths(e Env) Paths {
+	return Paths{
+		Settings: claudesettings.DefaultPath(e.Home),
+		Config:   config.DefaultPath(e.Home, e.XDGConfigHome),
+		Capture:  capture.DefaultDir(e.Home, e.XDGStateHome),
+		Self:     e.Self,
+	}
+}
+
+// UnknownSubcommandError is returned for unrecognised subcommands so callers
+// can distinguish parse errors from genuine runtime failures via errors.As.
+type UnknownSubcommandError struct {
+	Name string
+}
+
+func (e *UnknownSubcommandError) Error() string {
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, help)", e.Name)
+}
+
+// Run dispatches based on args[0]. Without args, runs the proxy/fallback
+// statusLine flow.
+func Run(ctx context.Context, p Paths, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return runProxy(ctx, p, stdin, stdout, stderr)
+	}
+	switch args[0] {
+	case "-h", "--help", "help":
+		printHelp(stdout)
+		return nil
+	case "install":
+		return runInstall(p, stdout)
+	case "uninstall":
+		return runUninstall(p, stdout)
+	case "status":
+		return runStatus(p, stdout)
+	default:
+		return &UnknownSubcommandError{Name: args[0]}
+	}
+}
+
+func runProxy(ctx context.Context, p Paths, stdin io.Reader, stdout, stderr io.Writer) error {
+	cfg, err := config.Load(p.Config)
+	if err != nil {
+		return err
+	}
+	return statusline.Run(ctx, statusline.Options{
+		ProxyCommand: cfg.Proxy.Command,
+		ProxyArgs:    cfg.Proxy.Args,
+		CaptureDir:   p.Capture,
+	}, stdin, stdout, stderr)
+}
+
+func runInstall(p Paths, stdout io.Writer) error {
+	s, err := claudesettings.Load(p.Settings)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(p.Config)
+	if err != nil {
+		return err
+	}
+
+	alreadyHooked := pointsToSelf(s, p.Self)
+
+	if !alreadyHooked {
+		if existing, ok := claudesettings.GetStatusLine(s); ok {
+			cfg.Backup.PreviousStatusLine = existing
+			if cmd, args, ok := extractCommand(existing); ok {
+				cfg.Proxy.Command = cmd
+				cfg.Proxy.Args = args
+			}
+		} else {
+			cfg.Backup.PreviousStatusLine = nil
+		}
+	}
+
+	sl, err := json.Marshal(map[string]string{
+		"type":    "command",
+		"command": p.Self,
+	})
+	if err != nil {
+		return fmt.Errorf("ccsb: marshal statusLine: %w", err)
+	}
+	claudesettings.SetStatusLine(s, sl)
+
+	if err := claudesettings.Save(p.Settings, s); err != nil {
+		return err
+	}
+	if err := config.Save(p.Config, cfg); err != nil {
+		return err
+	}
+
+	if alreadyHooked {
+		fmt.Fprintln(stdout, "ccsb: already installed; backup preserved")
+	} else {
+		fmt.Fprintln(stdout, "ccsb: installed")
+	}
+	return nil
+}
+
+func runUninstall(p Paths, stdout io.Writer) error {
+	cfg, err := config.Load(p.Config)
+	if err != nil {
+		return err
+	}
+	s, err := claudesettings.Load(p.Settings)
+	if err != nil {
+		return err
+	}
+
+	if !pointsToSelf(s, p.Self) {
+		return errors.New("ccsb: not installed (settings.json statusLine does not point at this binary)")
+	}
+
+	if len(cfg.Backup.PreviousStatusLine) > 0 {
+		claudesettings.SetStatusLine(s, cfg.Backup.PreviousStatusLine)
+	} else {
+		claudesettings.RemoveStatusLine(s)
+	}
+	cfg.Backup.PreviousStatusLine = nil
+
+	if err := claudesettings.Save(p.Settings, s); err != nil {
+		return err
+	}
+	if err := config.Save(p.Config, cfg); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "ccsb: uninstalled")
+	return nil
+}
+
+func runStatus(p Paths, stdout io.Writer) error {
+	cfg, err := config.Load(p.Config)
+	if err != nil {
+		return err
+	}
+	s, err := claudesettings.Load(p.Settings)
+	if err != nil {
+		return err
+	}
+
+	hooked := pointsToSelf(s, p.Self)
+	fmt.Fprintf(stdout, "ccsb: hooked: %s\n", yesNo(hooked))
+	fmt.Fprintf(stdout, "ccsb: self:     %s\n", p.Self)
+	fmt.Fprintf(stdout, "ccsb: settings: %s\n", p.Settings)
+	fmt.Fprintf(stdout, "ccsb: config:   %s\n", p.Config)
+	fmt.Fprintf(stdout, "ccsb: capture:  %s\n", p.Capture)
+	if cfg.Proxy.Command != "" {
+		args := strings.Join(cfg.Proxy.Args, " ")
+		fmt.Fprintf(stdout, "ccsb: proxy:    %s %s\n", cfg.Proxy.Command, args)
+	} else {
+		fmt.Fprintln(stdout, "ccsb: proxy:    (none — built-in fallback)")
+	}
+	if len(cfg.Backup.PreviousStatusLine) > 0 {
+		fmt.Fprintf(stdout, "ccsb: backup:   %s\n", string(cfg.Backup.PreviousStatusLine))
+	} else {
+		fmt.Fprintln(stdout, "ccsb: backup:   (none)")
+	}
+	return nil
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+func printHelp(w io.Writer) {
+	const help = `ccsb - Claude Code statusLine provider
+
+Without arguments, ccsb reads the JSON payload from stdin and renders the
+configured statusLine (proxy or built-in fallback). Claude Code invokes it
+via the "statusLine.command" entry in ~/.claude/settings.json.
+
+Subcommands:
+  install     Save the current statusLine into ccsb's config and replace it
+              in settings.json with this binary so Claude Code calls ccsb.
+  uninstall   Restore the previous statusLine from the saved backup.
+  status      Print whether settings.json points at ccsb and show the
+              current proxy/backup state.
+  help        Print this message.
+`
+	fmt.Fprint(w, help)
+}
+
+// pointsToSelf reports whether the current statusLine in s is a
+// {"type":"command","command":selfPath} entry.
+func pointsToSelf(s claudesettings.Settings, selfPath string) bool {
+	sl, ok := claudesettings.GetStatusLine(s)
+	if !ok {
+		return false
+	}
+	var obj struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(sl, &obj); err != nil {
+		return false
+	}
+	return obj.Command == selfPath
+}
+
+// extractCommand parses a statusLine value of the form
+// {"type":"command","command":"<cmd> <args...>"} and returns the first
+// whitespace-separated token as the command and the rest as args. Returns
+// ok=false if the input does not match. Quoted arguments are not handled —
+// users with quoted commands must edit ccsb's config directly.
+func extractCommand(raw json.RawMessage) (cmd string, args []string, ok bool) {
+	var obj struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", nil, false
+	}
+	if obj.Type != "command" || obj.Command == "" {
+		return "", nil, false
+	}
+	fields := strings.Fields(obj.Command)
+	if len(fields) == 0 {
+		return "", nil, false
+	}
+	return fields[0], fields[1:], true
+}
