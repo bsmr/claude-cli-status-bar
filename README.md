@@ -15,8 +15,9 @@ self-contained renderer that drops the `npx` / Node round-trip on every update.
 - **Proxy mode** — invoked by Claude Code on stdin, forwards the payload to a
   configured child command and prints its stdout verbatim.
 - **Capture** — every invocation writes the raw stdin JSON to
-  `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, so any
-  rendered statusLine can be compared against the real input.
+  `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, the rendered
+  statusLine bytes to `.out` and any proxy stderr to `.err`, all sharing the
+  same basename so input and result can be paired.
 - **Hook management** — `ccsb install` swaps the `statusLine` entry in
   `~/.claude/settings.json` with the path to this binary and saves the previous
   value verbatim; `ccsb uninstall` restores it byte-for-byte.

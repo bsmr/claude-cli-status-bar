@@ -129,6 +129,160 @@ func TestRun_CapturesPayloadToCaptureDir(t *testing.T) {
 	}
 }
 
+func TestRun_CapturesFallbackOutputAlongsideInput(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	body := `{"session_id":"sid","model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: dir}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	in, outFile := pairForSession(t, dir, "sid")
+	if in == "" || outFile == "" {
+		t.Fatalf("expected paired .json + .out files, got in=%q out=%q", in, outFile)
+	}
+	if base(in, ".json") != base(outFile, ".out") {
+		t.Errorf("input and output basenames should match:\n in:  %s\n out: %s", in, outFile)
+	}
+	gotOut, _ := os.ReadFile(outFile)
+	if string(gotOut) != out.String() {
+		t.Errorf("captured .out should equal real stdout:\n captured=%q\n stdout=%q", gotOut, out.String())
+	}
+	if !strings.Contains(string(gotOut), "Opus") {
+		t.Errorf("expected Opus in captured output, got %q", gotOut)
+	}
+}
+
+func TestRun_CapturesProxyStdoutAlongsideInput(t *testing.T) {
+	if _, err := exec.LookPath("cat"); err != nil {
+		t.Skip("cat not available")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	body := `{"session_id":"px","model":{"display_name":"Opus"}}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{
+		ProxyCommand: "cat",
+		CaptureDir:   dir,
+	}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	in, outFile := pairForSession(t, dir, "px")
+	if in == "" || outFile == "" {
+		t.Fatalf("expected paired .json + .out files, got in=%q out=%q", in, outFile)
+	}
+	gotIn, _ := os.ReadFile(in)
+	gotOut, _ := os.ReadFile(outFile)
+	if string(gotIn) != body {
+		t.Errorf(".json content: got %q", gotIn)
+	}
+	if string(gotOut) != body { // cat passes input verbatim
+		t.Errorf(".out content: got %q, want %q", gotOut, body)
+	}
+}
+
+func TestRun_CapturesProxyStderrSeparately(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	body := `{"session_id":"ex"}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{
+		ProxyCommand: "sh",
+		ProxyArgs:    []string{"-c", "printf to-stdout; printf to-stderr 1>&2"},
+		CaptureDir:   dir,
+	}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	var inFile, outFile, errFile string
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		switch {
+		case strings.HasSuffix(e.Name(), ".json"):
+			inFile = p
+		case strings.HasSuffix(e.Name(), ".out"):
+			outFile = p
+		case strings.HasSuffix(e.Name(), ".err"):
+			errFile = p
+		}
+	}
+	if inFile == "" || outFile == "" || errFile == "" {
+		t.Fatalf(".json/.out/.err all expected, got %q %q %q", inFile, outFile, errFile)
+	}
+	if got, _ := os.ReadFile(outFile); string(got) != "to-stdout" {
+		t.Errorf(".out: got %q", got)
+	}
+	if got, _ := os.ReadFile(errFile); string(got) != "to-stderr" {
+		t.Errorf(".err: got %q", got)
+	}
+}
+
+func TestRun_DoesNotWriteOutFileWhenOutputIsEmpty(t *testing.T) {
+	if _, err := exec.LookPath("true"); err != nil {
+		t.Skip("true not available")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	body := `{"session_id":"silent"}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{
+		ProxyCommand: "true", // exits 0 with no output
+		CaptureDir:   dir,
+	}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, e := range mustReadDir(t, dir) {
+		if strings.HasSuffix(e.Name(), ".out") || strings.HasSuffix(e.Name(), ".err") {
+			t.Errorf("unexpected empty capture file %s", e.Name())
+		}
+	}
+}
+
+// pairForSession finds the .json and .out files in dir whose basename embeds
+// sessionID. Returns ("", "") if either is missing.
+func pairForSession(t *testing.T, dir, sessionID string) (in, out string) {
+	t.Helper()
+	for _, e := range mustReadDir(t, dir) {
+		if !strings.Contains(e.Name(), sessionID) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		switch {
+		case strings.HasSuffix(e.Name(), ".json"):
+			in = p
+		case strings.HasSuffix(e.Name(), ".out"):
+			out = p
+		}
+	}
+	return in, out
+}
+
+func mustReadDir(t *testing.T, dir string) []os.DirEntry {
+	t.Helper()
+	es, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	return es
+}
+
+// base trims the given suffix off a path's basename.
+func base(path, suffix string) string {
+	b := filepath.Base(path)
+	return strings.TrimSuffix(b, suffix)
+}
+
 func TestRun_DoesNotCaptureWhenDirEmpty(t *testing.T) {
 	ctx := context.Background()
 	in := strings.NewReader(`{"session_id":"x"}`)

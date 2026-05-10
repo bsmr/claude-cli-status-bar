@@ -20,7 +20,7 @@ cost, etc.), and renders the first line of stdout as the status bar.
 
 ### Operating modes
 
-- **Proxy mode** (no args, the path Claude Code invokes): read stdin once, capture the raw bytes to `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, then either forward the payload to a configured proxied statusLine command (its stdout becomes ours) or render a built-in fallback.
+- **Proxy mode** (no args, the path Claude Code invokes): read stdin once, capture the raw bytes to `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, then either forward the payload to a configured proxied statusLine command (its stdout becomes ours) or render a built-in fallback. The rendered output and any proxy stderr are captured alongside the input as `.out` and `.err` files sharing the same basename, so input and result can be paired by readers.
 - **`ccsb install`**: read the current `statusLine` from `~/.claude/settings.json`, save it verbatim to the ccsb config (`$XDG_CONFIG_HOME/ccsb/config.json`) under `backup.previous_status_line`, derive `proxy.command`/`proxy.args` from it via whitespace split, and replace `statusLine` with this binary's path. Idempotent; never overwrites an existing backup.
 - **`ccsb uninstall`**: strict inverse — only proceeds if `statusLine` currently points at this binary. Restores the backup byte-for-byte (or removes the key if there was no prior).
 - **`ccsb status`**: prints `hooked: yes/no`, resolved paths, current proxy command, and current backup.
@@ -93,12 +93,21 @@ stdin (Claude Code JSON)
    ▼
 cli.Run ──► statusline.Run
               │
-              ├──► capture.Save(raw, sessionID)            (best effort; errors → stderr)
+              ├──► capture.Save(raw, sessionID, now)               .json (input)
               │
-              └──► proxy.Run(cfg.Proxy.Command, args, raw) ──► child stdout ──► our stdout
-                       │
-                       └── (if ProxyCommand == "") fallback render
+              ├──► proxy.Run via tee writers (errIgnoringWriter)
+              │      │                                              ┌────────────────►  Claude Code stdout
+              │      └─► child stdout ──► outBuf ──► .out (output) ─┘
+              │           child stderr ──► errBuf ──► .err (only if non-empty)
+              │
+              └── (if ProxyCommand == "") fallback render is teed identically
 ```
+
+Notes on the tee path:
+
+- `errIgnoringWriter` swallows write errors from real stdout/stderr so a downstream consumer truncating its end of the pipe (`head -c N`, Claude Code closing early) cannot abort the MultiWriter chain mid-stream. The buffer must always reach `SaveOutput` with the full bytes the proxy emitted.
+- For the same reason, `cmd/ccsb/main.go` ignores `SIGPIPE`. Without that, Go's default handler terminates the process on a broken-pipe write to fd 1/2 *before* `SaveOutput` runs, even though the user-level write returned an error we wanted to swallow.
+- All three capture files share a basename. Pass the same `time.Time` to `capture.Save` and `capture.SaveOutput` so the prefix matches.
 
 ## Style Guide
 

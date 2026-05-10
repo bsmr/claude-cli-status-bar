@@ -1,15 +1,16 @@
 // Package statusline implements the Claude Code statusLine provider.
 //
 // Run reads a JSON payload from stdin once into memory, optionally captures
-// the raw bytes to disk for later inspection, and either forwards the payload
-// to a configured proxy command (whose stdout becomes our stdout) or, if no
-// proxy is configured, renders a minimal built-in fallback line.
+// the raw bytes plus the rendered output to disk, and either forwards the
+// payload to a configured proxy command (whose stdout becomes our stdout)
+// or, if no proxy is configured, renders a minimal built-in fallback line.
 //
 // See https://docs.claude.com/en/docs/claude-code/statusline for the upstream
 // payload schema.
 package statusline
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,8 +31,9 @@ type Options struct {
 	ProxyCommand string
 	ProxyArgs    []string
 	// CaptureDir, when non-empty, receives a copy of the raw stdin payload
-	// per capture.Save. Capture failures are reported on stderr but do not
-	// fail Run.
+	// (.json) plus the rendered statusLine bytes (.out) and any stderr
+	// (.err). All three files share a basename so they can be paired.
+	// Capture failures are reported on stderr but do not fail Run.
 	CaptureDir string
 }
 
@@ -52,8 +54,9 @@ type workspace struct {
 
 const placeholder = "claude-cli-status-bar"
 
-// Run reads stdin to completion, optionally captures it, then either runs the
-// configured proxy or renders the built-in fallback.
+// Run reads stdin to completion, optionally captures input and rendered
+// output, then either runs the configured proxy or renders the built-in
+// fallback.
 func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -64,24 +67,67 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		return fmt.Errorf("read stdin: %w", err)
 	}
 
-	// Parse best-effort: a malformed payload is still captured and proxied.
+	// Best-effort parse: a malformed payload is still captured and proxied.
 	var p payload
 	_ = json.Unmarshal(raw, &p)
 
-	if opts.CaptureDir != "" && len(raw) > 0 {
-		if _, cerr := capture.Save(opts.CaptureDir, p.SessionID, raw, time.Now()); cerr != nil {
+	now := time.Now()
+	capturing := opts.CaptureDir != "" && len(raw) > 0
+
+	if capturing {
+		if _, cerr := capture.Save(opts.CaptureDir, p.SessionID, raw, now); cerr != nil {
 			fmt.Fprintf(stderr, "ccsb: capture: %s\n", cerr)
 		}
 	}
 
-	if opts.ProxyCommand != "" {
-		return proxy.Run(ctx, opts.ProxyCommand, opts.ProxyArgs, raw, stdout, stderr)
+	// Tee stdout/stderr through buffers so the rendered output can be saved
+	// alongside the input. The downstream writers are wrapped so that a
+	// closed-pipe error (the consumer stopped reading) does not abort the
+	// MultiWriter chain - the buffer must end up with the full output even
+	// if the real stdout/stderr drops bytes.
+	var outBuf, errBuf bytes.Buffer
+	outW, errW := stdout, stderr
+	if capturing {
+		outW = io.MultiWriter(errIgnoringWriter{stdout}, &outBuf)
+		errW = io.MultiWriter(errIgnoringWriter{stderr}, &errBuf)
 	}
 
-	if _, err := fmt.Fprintln(stdout, render(p)); err != nil {
-		return fmt.Errorf("write statusLine: %w", err)
+	var runErr error
+	if opts.ProxyCommand != "" {
+		runErr = proxy.Run(ctx, opts.ProxyCommand, opts.ProxyArgs, raw, outW, errW)
+	} else {
+		if _, werr := fmt.Fprintln(outW, render(p)); werr != nil {
+			runErr = fmt.Errorf("write statusLine: %w", werr)
+		}
 	}
-	return nil
+
+	if capturing {
+		if outBuf.Len() > 0 {
+			if _, cerr := capture.SaveOutput(opts.CaptureDir, p.SessionID, outBuf.Bytes(), now, "out"); cerr != nil {
+				fmt.Fprintf(stderr, "ccsb: capture out: %s\n", cerr)
+			}
+		}
+		if errBuf.Len() > 0 {
+			if _, cerr := capture.SaveOutput(opts.CaptureDir, p.SessionID, errBuf.Bytes(), now, "err"); cerr != nil {
+				fmt.Fprintf(stderr, "ccsb: capture err: %s\n", cerr)
+			}
+		}
+	}
+
+	return runErr
+}
+
+// errIgnoringWriter wraps an io.Writer and reports every write as fully
+// successful, even when the underlying writer returns an error (e.g. EPIPE
+// because the consumer closed its end). It is paired with a buffer in a
+// MultiWriter so partial reads downstream cannot abort the capture chain.
+type errIgnoringWriter struct{ w io.Writer }
+
+func (e errIgnoringWriter) Write(p []byte) (int, error) {
+	if e.w != nil {
+		_, _ = e.w.Write(p)
+	}
+	return len(p), nil
 }
 
 func render(p payload) string {

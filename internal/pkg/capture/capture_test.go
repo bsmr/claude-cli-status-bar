@@ -137,6 +137,88 @@ func TestSave_DoesNotLeaveTempFileOnSuccess(t *testing.T) {
 	}
 }
 
+// SaveOutput
+
+func TestSaveOutput_WritesNeighbourFileWithGivenSuffix(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 10, 14, 30, 45, 123456789, time.UTC)
+
+	inPath, err := capture.Save(dir, "sess-abc", []byte(`{"x":1}`), now)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	outPath, err := capture.SaveOutput(dir, "sess-abc", []byte("rendered line\n"), now, "out")
+	if err != nil {
+		t.Fatalf("SaveOutput: %v", err)
+	}
+
+	wantOut := filepath.Join(dir, "2026-05-10T14:30:45.123456789Z-sess-abc.out")
+	if outPath != wantOut {
+		t.Errorf("output path: got %q, want %q", outPath, wantOut)
+	}
+	// Same prefix as the input file, just different extension.
+	if filepath.Base(outPath[:len(outPath)-len(".out")]) !=
+		filepath.Base(inPath[:len(inPath)-len(".json")]) {
+		t.Errorf("output should share basename with input:\n in:  %s\n out: %s", inPath, outPath)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "rendered line\n" {
+		t.Errorf("content: got %q", got)
+	}
+}
+
+func TestSaveOutput_AcceptsAnyTextSuffix(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for _, suffix := range []string{"out", "err", "stdout", "log"} {
+		path, err := capture.SaveOutput(dir, "s", []byte("x"), now, suffix)
+		if err != nil {
+			t.Fatalf("SaveOutput %q: %v", suffix, err)
+		}
+		if !strings.HasSuffix(path, "."+suffix) {
+			t.Errorf("path %q should end in .%s", path, suffix)
+		}
+	}
+}
+
+func TestSaveOutput_RejectsEmptySuffix(t *testing.T) {
+	if _, err := capture.SaveOutput(t.TempDir(), "s", []byte("x"), time.Now(), ""); err == nil {
+		t.Error("expected error for empty suffix")
+	}
+}
+
+func TestSaveOutput_RejectsEmptyData(t *testing.T) {
+	if _, err := capture.SaveOutput(t.TempDir(), "s", nil, time.Now(), "out"); err == nil {
+		t.Error("expected error for nil data")
+	}
+}
+
+func TestSaveOutput_RejectsEmptyDir(t *testing.T) {
+	if _, err := capture.SaveOutput("", "s", []byte("x"), time.Now(), "out"); err == nil {
+		t.Error("expected error for empty dir")
+	}
+}
+
+func TestSaveOutput_PreservesRawBytesIncludingANSI(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	payload := []byte("\x1b[31mred\x1b[0m\n")
+
+	path, err := capture.SaveOutput(dir, "s", payload, now, "out")
+	if err != nil {
+		t.Fatalf("SaveOutput: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, payload) {
+		t.Errorf("ANSI bytes mangled: got %q, want %q", got, payload)
+	}
+}
+
 func TestDefaultDir_UsesXDGStateHomeWhenSet(t *testing.T) {
 	got := capture.DefaultDir("/home/u", "/var/state")
 	want := filepath.Join("/var/state", "ccsb", "captures")

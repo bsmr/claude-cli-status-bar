@@ -24,6 +24,11 @@ func main() {
 }
 
 func run() error {
+	// Ignore SIGPIPE so a downstream consumer (Claude Code, a shell pipeline)
+	// closing its end of stdout does not terminate the process before the
+	// capture files are written. Writes still return EPIPE; we tolerate that.
+	signal.Ignore(syscall.SIGPIPE)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

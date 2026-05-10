@@ -1,12 +1,16 @@
-// Package capture persists raw stdin payloads received from Claude Code so
-// they can be inspected later in an editor.
+// Package capture persists the raw payloads and rendered output of each ccsb
+// invocation so they can be inspected later in an editor.
 //
-// One file is written per invocation, named
+// Each invocation produces files that share a common basename:
 //
-//	<RFC3339Nano UTC timestamp>-<sanitized session id>.json
+//	<RFC3339Nano UTC timestamp>-<sanitized session id>
 //
-// inside the configured directory. Writes are atomic (temp file + rename) so
-// readers never see partial content.
+// with extensions per kind: ".json" for the stdin payload, ".out" for the
+// rendered statusLine bytes, ".err" for any stderr the proxy emitted. Pass
+// the same time.Time to Save and SaveOutput so paired files share a basename.
+//
+// All writes are atomic (temp file + rename) so readers never see partial
+// content.
 package capture
 
 import (
@@ -20,43 +24,28 @@ import (
 
 const sessionPlaceholder = "unknown"
 
-// Save writes payload to dir and returns the absolute path of the resulting
-// file. dir is created with 0755 if missing. The session id is sanitised so
-// path traversal and slashes cannot escape dir.
+// Save writes payload to dir as <basename>.json. dir is created with 0755 if
+// missing. The session id is sanitised so path traversal and slashes cannot
+// escape dir.
 func Save(dir, sessionID string, payload []byte, now time.Time) (string, error) {
-	if dir == "" {
-		return "", errors.New("capture: empty dir")
-	}
 	if len(payload) == 0 {
 		return "", errors.New("capture: empty payload")
 	}
+	return writeFile(dir, basename(sessionID, now)+".json", payload)
+}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("capture: mkdir %s: %w", dir, err)
+// SaveOutput writes data to dir as <basename>.<suffix> where suffix is the
+// extension without a leading dot (typically "out" for stdout, "err" for
+// stderr). Pass the same now as the matching Save call so the two files
+// share a basename and can be paired by readers.
+func SaveOutput(dir, sessionID string, data []byte, now time.Time, suffix string) (string, error) {
+	if suffix == "" {
+		return "", errors.New("capture: empty suffix")
 	}
-
-	final := filepath.Join(dir, filename(sessionID, now))
-
-	tmp, err := os.CreateTemp(dir, ".capture-*.tmp")
-	if err != nil {
-		return "", fmt.Errorf("capture: create temp: %w", err)
+	if len(data) == 0 {
+		return "", errors.New("capture: empty data")
 	}
-	tmpPath := tmp.Name()
-
-	if _, err := tmp.Write(payload); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("capture: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("capture: close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, final); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("capture: rename: %w", err)
-	}
-	return final, nil
+	return writeFile(dir, basename(sessionID, now)+"."+suffix, data)
 }
 
 // DefaultDir resolves the default capture directory.
@@ -74,13 +63,47 @@ func DefaultDir(home, xdgStateHome string) string {
 	return filepath.Join(base, "ccsb", "captures")
 }
 
-func filename(sessionID string, now time.Time) string {
+// basename returns "<RFC3339Nano UTC>-<sanitized session id>" — the prefix
+// shared by every file written for one invocation.
+func basename(sessionID string, now time.Time) string {
 	ts := now.UTC().Format(time.RFC3339Nano)
 	sid := sanitize(sessionID)
 	if sid == "" {
 		sid = sessionPlaceholder
 	}
-	return fmt.Sprintf("%s-%s.json", ts, sid)
+	return fmt.Sprintf("%s-%s", ts, sid)
+}
+
+// writeFile writes data atomically to dir/name and returns the absolute path.
+func writeFile(dir, name string, data []byte) (string, error) {
+	if dir == "" {
+		return "", errors.New("capture: empty dir")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("capture: mkdir %s: %w", dir, err)
+	}
+	final := filepath.Join(dir, name)
+
+	tmp, err := os.CreateTemp(dir, ".capture-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("capture: create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("capture: write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("capture: close temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, final); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("capture: rename: %w", err)
+	}
+	return final, nil
 }
 
 // sanitize keeps ASCII letters, digits, '-' and '_'. Anything else becomes '_'
