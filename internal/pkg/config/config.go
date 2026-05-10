@@ -19,12 +19,15 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
 // Config is the on-disk shape.
 type Config struct {
-	Proxy  Proxy  `json:"proxy,omitzero"`
-	Backup Backup `json:"backup,omitzero"`
+	Proxy  Proxy         `json:"proxy,omitzero"`
+	Backup Backup        `json:"backup,omitzero"`
+	Render render.Config `json:"render,omitzero"`
 }
 
 // Proxy describes the external statusLine implementation that ccsb forwards

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
 func TestDefaultPath_UsesXDGConfigHomeWhenSet(t *testing.T) {
@@ -140,5 +141,28 @@ func TestSave_DoesNotLeaveTempFiles(t *testing.T) {
 		if strings.HasSuffix(name, ".tmp") || strings.HasPrefix(name, ".config-") {
 			t.Errorf("leftover temp file: %s", name)
 		}
+	}
+}
+
+func TestSaveLoadRoundtrip_PreservesRenderConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	in := config.Config{
+		Render: render.Config{
+			Rows: [][]render.Segment{
+				{{Type: "model", Show1MFlag: true}, {Type: "cost"}},
+				{{Type: "git_branch"}},
+			},
+			Separator: " · ",
+		},
+	}
+	if err := config.Save(path, in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	out, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(out, in) {
+		t.Errorf("roundtrip mismatch:\n got %+v\nwant %+v", out, in)
 	}
 }

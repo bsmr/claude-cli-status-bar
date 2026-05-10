@@ -37,6 +37,15 @@ type Env struct {
 	Self          string
 }
 
+// Flags carries environment-derived booleans that travel alongside Paths
+// into Run. Keeping these separate from Paths preserves Paths' "filesystem
+// locations" semantic.
+type Flags struct {
+	// NoColor disables ANSI emission in the native renderer. Resolved by
+	// the caller from the NO_COLOR environment variable.
+	NoColor bool
+}
+
 // ResolvePaths derives Paths from environment values.
 func ResolvePaths(e Env) Paths {
 	return Paths{
@@ -59,9 +68,9 @@ func (e *UnknownSubcommandError) Error() string {
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
 // statusLine flow.
-func Run(ctx context.Context, p Paths, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return runProxy(ctx, p, stdin, stdout, stderr)
+		return runProxy(ctx, p, f, stdin, stdout, stderr)
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -78,7 +87,7 @@ func Run(ctx context.Context, p Paths, args []string, stdin io.Reader, stdout, s
 	}
 }
 
-func runProxy(ctx context.Context, p Paths, stdin io.Reader, stdout, stderr io.Writer) error {
+func runProxy(ctx context.Context, p Paths, f Flags, stdin io.Reader, stdout, stderr io.Writer) error {
 	cfg, err := config.Load(p.Config)
 	if err != nil {
 		return err
@@ -87,6 +96,8 @@ func runProxy(ctx context.Context, p Paths, stdin io.Reader, stdout, stderr io.W
 		ProxyCommand: cfg.Proxy.Command,
 		ProxyArgs:    cfg.Proxy.Args,
 		CaptureDir:   p.Capture,
+		Render:       cfg.Render,
+		NoColor:      f.NoColor,
 	}, stdin, stdout, stderr)
 }
 

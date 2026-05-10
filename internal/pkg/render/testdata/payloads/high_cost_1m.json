@@ -1,0 +1,57 @@
+{
+  "session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "transcript_path": "/transcript.jsonl",
+  "cwd": "/repo/path",
+  "effort": {
+    "level": "xhigh"
+  },
+  "session_name": "Skeleton implementieren",
+  "model": {
+    "id": "claude-opus-4-7[1m]",
+    "display_name": "Opus 4.7 (1M context)"
+  },
+  "workspace": {
+    "current_dir": "/repo/path",
+    "project_dir": "/repo/path",
+    "added_dirs": []
+  },
+  "version": "2.1.138",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 54.580680549999975,
+    "total_duration_ms": 44787788,
+    "total_api_duration_ms": 6774367,
+    "total_lines_added": 6873,
+    "total_lines_removed": 253
+  },
+  "context_window": {
+    "total_input_tokens": 520112,
+    "total_output_tokens": 5527,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 0,
+      "output_tokens": 5000,
+      "cache_creation_input_tokens": 5000,
+      "cache_read_input_tokens": 514000
+    },
+    "used_percentage": 52,
+    "remaining_percentage": 48
+  },
+  "exceeds_200k_tokens": true,
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 41,
+      "resets_at": 1778412000
+    },
+    "seven_day": {
+      "used_percentage": 54,
+      "resets_at": 1778878800
+    }
+  }
+}

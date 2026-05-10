@@ -44,5 +44,9 @@ func run() error {
 		Self:          self,
 	})
 
-	return cli.Run(ctx, paths, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+	flags := cli.Flags{
+		NoColor: os.Getenv("NO_COLOR") != "",
+	}
+
+	return cli.Run(ctx, paths, flags, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 }

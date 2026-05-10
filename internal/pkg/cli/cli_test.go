@@ -15,6 +15,7 @@ import (
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/cli"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
 type env struct {
@@ -73,7 +74,7 @@ func TestRun_NoArgsRunsFallbackWhenNoProxyConfigured(t *testing.T) {
 	in := strings.NewReader(`{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`)
 	var out, errOut bytes.Buffer
 
-	if err := cli.Run(context.Background(), e.paths, nil, in, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := strings.TrimRight(out.String(), "\n"); !strings.Contains(got, "Opus") {
@@ -90,7 +91,7 @@ func TestRun_NoArgsUsesConfiguredProxy(t *testing.T) {
 
 	body := `{"model":{"display_name":"Opus"}}`
 	var out, errOut bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, nil, strings.NewReader(body), &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{}, strings.NewReader(body), &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if out.String() != body {
@@ -108,7 +109,7 @@ func TestInstall_CapturesPreviousStatusLineAndPointsToSelf(t *testing.T) {
 	}`)
 
 	var out, errOut bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
@@ -152,7 +153,7 @@ func TestInstall_NoExistingStatusLineIsAccepted(t *testing.T) {
 	e.writeSettings(t, `{"theme":"dark"}`)
 
 	var out, errOut bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
@@ -171,7 +172,7 @@ func TestInstall_WhenSettingsFileAbsentCreatesIt(t *testing.T) {
 	// no settings.json at all
 
 	var out, errOut bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	s := e.loadSettings(t)
@@ -187,14 +188,14 @@ func TestInstall_IsIdempotentWhenAlreadyHookedAndDoesNotOverwriteBackup(t *testi
 	}`)
 
 	var out, errOut bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("install (1): %v", err)
 	}
 	first := e.loadConfig(t).Backup.PreviousStatusLine
 
 	out.Reset()
 	errOut.Reset()
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("install (2): %v", err)
 	}
 	second := e.loadConfig(t).Backup.PreviousStatusLine
@@ -212,11 +213,11 @@ func TestUninstall_RestoresPreviousStatusLine(t *testing.T) {
 		"statusLine": {"type":"command","command":"old original"}
 	}`)
 	var buf bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &buf, &buf); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
-	if err := cli.Run(context.Background(), e.paths, []string{"uninstall"}, nil, &buf, &buf); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"uninstall"}, nil, &buf, &buf); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 
@@ -247,11 +248,11 @@ func TestUninstall_RemovesStatusLineWhenNoPreviousExisted(t *testing.T) {
 	e := newEnv(t)
 	e.writeSettings(t, `{"theme":"dark"}`)
 	var buf bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &buf, &buf); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
-	if err := cli.Run(context.Background(), e.paths, []string{"uninstall"}, nil, &buf, &buf); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"uninstall"}, nil, &buf, &buf); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 
@@ -269,7 +270,7 @@ func TestUninstall_WithoutPriorInstallReturnsError(t *testing.T) {
 	e.writeSettings(t, `{"theme":"dark"}`)
 
 	var out, errOut bytes.Buffer
-	err := cli.Run(context.Background(), e.paths, []string{"uninstall"}, nil, &out, &errOut)
+	err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"uninstall"}, nil, &out, &errOut)
 	if err == nil {
 		t.Error("expected error when uninstalling without prior install")
 	}
@@ -281,12 +282,12 @@ func TestStatus_ReportsHookedAfterInstall(t *testing.T) {
 	e := newEnv(t)
 	e.writeSettings(t, `{}`)
 	var buf bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &buf, &buf); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
 	var out, errOut bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"status"}, nil, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"status"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("status: %v", err)
 	}
 	if !strings.Contains(out.String(), "hooked: yes") {
@@ -299,7 +300,7 @@ func TestStatus_ReportsNotHookedWhenSettingsPointElsewhere(t *testing.T) {
 	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/elsewhere"}}`)
 
 	var out, errOut bytes.Buffer
-	if err := cli.Run(context.Background(), e.paths, []string{"status"}, nil, &out, &errOut); err != nil {
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"status"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("status: %v", err)
 	}
 	if !strings.Contains(out.String(), "hooked: no") {
@@ -312,7 +313,7 @@ func TestStatus_ReportsNotHookedWhenSettingsPointElsewhere(t *testing.T) {
 func TestRun_UnknownSubcommandReturnsError(t *testing.T) {
 	e := newEnv(t)
 	var out, errOut bytes.Buffer
-	err := cli.Run(context.Background(), e.paths, []string{"frobnicate"}, nil, &out, &errOut)
+	err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"frobnicate"}, nil, &out, &errOut)
 	if err == nil {
 		t.Error("expected error for unknown subcommand")
 	}
@@ -325,7 +326,7 @@ func TestRun_HelpFlagsPrintUsage(t *testing.T) {
 	e := newEnv(t)
 	for _, flag := range []string{"-h", "--help", "help"} {
 		var out, errOut bytes.Buffer
-		err := cli.Run(context.Background(), e.paths, []string{flag}, nil, &out, &errOut)
+		err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{flag}, nil, &out, &errOut)
 		if err != nil {
 			t.Errorf("%s: unexpected error: %v", flag, err)
 		}
@@ -365,7 +366,7 @@ func TestResolvePaths_PrefersXDGOverHomeDefaults(t *testing.T) {
 // from depending on string matching forever.
 func TestRun_UnknownSubcommandErrorIsTyped(t *testing.T) {
 	e := newEnv(t)
-	err := cli.Run(context.Background(), e.paths, []string{"nope"}, nil, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"nope"}, nil, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -375,5 +376,24 @@ func TestRun_UnknownSubcommandErrorIsTyped(t *testing.T) {
 	}
 	if ue != nil && ue.Name != "nope" {
 		t.Errorf("Name: got %q, want %q", ue.Name, "nope")
+	}
+}
+
+func TestRun_PassesNoColorThroughToStatusline(t *testing.T) {
+	e := newEnv(t)
+	e.saveConfig(t, config.Config{
+		Render: render.Config{
+			Rows: [][]render.Segment{{{Type: "model", FG: "131"}}},
+		},
+	})
+	body := `{"model":{"display_name":"Opus"}}`
+	var out, errOut bytes.Buffer
+	err := cli.Run(context.Background(), e.paths, cli.Flags{NoColor: true}, []string{},
+		strings.NewReader(body), &out, &errOut)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Errorf("NoColor should suppress ANSI, got %q", out.String())
 	}
 }

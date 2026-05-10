@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/statusline"
 )
 
@@ -23,12 +24,14 @@ func TestRun_FallbackRendersModelAndCurrentDir(t *testing.T) {
 	}`)
 	var out, errOut bytes.Buffer
 
-	if err := statusline.Run(ctx, statusline.Options{}, in, &out, &errOut); err != nil {
+	if err := statusline.Run(ctx, statusline.Options{NoColor: true}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	got := strings.TrimRight(out.String(), "\n")
-	if want := "Opus · /tmp/proj"; got != want {
-		t.Errorf("stdout: got %q, want %q", got, want)
+	if !strings.Contains(out.String(), "Opus") {
+		t.Errorf("output must contain model name, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "proj") {
+		t.Errorf("output must contain workspace dir basename, got %q", out.String())
 	}
 }
 
@@ -40,12 +43,14 @@ func TestRun_FallbackRendersFromProjectDir(t *testing.T) {
 	}`)
 	var out, errOut bytes.Buffer
 
-	if err := statusline.Run(ctx, statusline.Options{}, in, &out, &errOut); err != nil {
+	if err := statusline.Run(ctx, statusline.Options{NoColor: true}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	got := strings.TrimRight(out.String(), "\n")
-	if want := "Sonnet · /home/u/repo"; got != want {
-		t.Errorf("stdout: got %q, want %q", got, want)
+	if !strings.Contains(out.String(), "Sonnet") {
+		t.Errorf("output must contain model name, got %q", out.String())
+	}
+	if out.String() == "" {
+		t.Errorf("output must not be empty when only project_dir is set, got %q", out.String())
 	}
 }
 
@@ -54,7 +59,7 @@ func TestRun_FallbackEmptyJSONRendersPlaceholder(t *testing.T) {
 	in := strings.NewReader(`{}`)
 	var out, errOut bytes.Buffer
 
-	if err := statusline.Run(ctx, statusline.Options{}, in, &out, &errOut); err != nil {
+	if err := statusline.Run(ctx, statusline.Options{NoColor: true}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := strings.TrimRight(out.String(), "\n"); got == "" {
@@ -67,7 +72,7 @@ func TestRun_FallbackInvalidJSONStillRendersPlaceholder(t *testing.T) {
 	in := strings.NewReader("not json at all")
 	var out, errOut bytes.Buffer
 
-	if err := statusline.Run(ctx, statusline.Options{}, in, &out, &errOut); err != nil {
+	if err := statusline.Run(ctx, statusline.Options{NoColor: true}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if out.Len() == 0 {
@@ -80,7 +85,8 @@ func TestRun_FallbackWritesExactlyOneLine(t *testing.T) {
 	in := strings.NewReader(`{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`)
 	var out, errOut bytes.Buffer
 
-	if err := statusline.Run(ctx, statusline.Options{}, in, &out, &errOut); err != nil {
+	cfg := render.Config{Rows: [][]render.Segment{{{Type: "model"}}}}
+	if err := statusline.Run(ctx, statusline.Options{Render: cfg, NoColor: true}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if !strings.HasSuffix(out.String(), "\n") {
@@ -308,7 +314,7 @@ func TestRun_CaptureErrorIsLoggedNotFatal(t *testing.T) {
 	in := strings.NewReader(`{"session_id":"x","model":{"display_name":"Opus"}}`)
 	var out, errOut bytes.Buffer
 
-	if err := statusline.Run(ctx, statusline.Options{CaptureDir: bad}, in, &out, &errOut); err != nil {
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: bad, NoColor: true}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run should not fail on capture error: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "capture") {
@@ -394,5 +400,56 @@ func TestRun_CancelledContextReturnsError(t *testing.T) {
 
 	if err := statusline.Run(ctx, statusline.Options{}, in, &out, &errOut); err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+}
+
+func TestRun_NativeRenderWhenNoProxy(t *testing.T) {
+	ctx := context.Background()
+	body := `{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`
+	cfg := render.Config{
+		Rows: [][]render.Segment{{{Type: "model"}, {Type: "cwd"}}},
+	}
+	var out, errOut bytes.Buffer
+	err := statusline.Run(ctx, statusline.Options{Render: cfg, NoColor: true}, strings.NewReader(body), &out, &errOut)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := "Opus | x\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestRun_NoColorIsRespected(t *testing.T) {
+	ctx := context.Background()
+	body := `{"model":{"display_name":"Opus"}}`
+	cfg := render.Config{
+		Rows: [][]render.Segment{{{Type: "model", FG: "131"}}},
+	}
+	var out bytes.Buffer
+	err := statusline.Run(ctx, statusline.Options{Render: cfg, NoColor: true},
+		strings.NewReader(body), &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Errorf("NoColor should suppress ANSI, got %q", out.String())
+	}
+}
+
+func TestRun_DefaultRenderUsedWhenNoConfigAndNoProxy(t *testing.T) {
+	ctx := context.Background()
+	body := `{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/tmp"}}`
+	var out bytes.Buffer
+	err := statusline.Run(ctx, statusline.Options{NoColor: true}, strings.NewReader(body), &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// default layout is multi-line and includes the model name
+	if !strings.Contains(out.String(), "Opus") {
+		t.Errorf("default layout should include model name, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "\n") {
+		t.Errorf("default layout should be multi-line, got %q", out.String())
 	}
 }

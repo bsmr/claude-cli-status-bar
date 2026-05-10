@@ -15,11 +15,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/capture"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/proxy"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
 // Options configures a single Run invocation. All fields are optional; an
@@ -35,6 +35,12 @@ type Options struct {
 	// (.err). All three files share a basename so they can be paired.
 	// Capture failures are reported on stderr but do not fail Run.
 	CaptureDir string
+	// Render configures the built-in native renderer used when ProxyCommand
+	// is empty. A zero value triggers the render package's default layout.
+	Render render.Config
+	// NoColor disables ANSI emission in the native renderer. Caller resolves
+	// it from the NO_COLOR environment variable.
+	NoColor bool
 }
 
 type payload struct {
@@ -51,8 +57,6 @@ type workspace struct {
 	CurrentDir string `json:"current_dir"`
 	ProjectDir string `json:"project_dir"`
 }
-
-const placeholder = "claude-cli-status-bar"
 
 // Run reads stdin to completion, optionally captures input and rendered
 // output, then either runs the configured proxy or renders the built-in
@@ -96,7 +100,18 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	if opts.ProxyCommand != "" {
 		runErr = proxy.Run(ctx, opts.ProxyCommand, opts.ProxyArgs, raw, outW, errW)
 	} else {
-		if _, werr := fmt.Fprintln(outW, render(p)); werr != nil {
+		cwd := p.Workspace.CurrentDir
+		if cwd == "" {
+			cwd = p.Workspace.ProjectDir
+		}
+		rendered, rerr := render.Render(render.Options{
+			Config:  opts.Render,
+			Cwd:     cwd,
+			NoColor: opts.NoColor,
+		}, raw)
+		if rerr != nil {
+			runErr = fmt.Errorf("render: %w", rerr)
+		} else if _, werr := fmt.Fprintln(outW, rendered); werr != nil {
 			runErr = fmt.Errorf("write statusLine: %w", werr)
 		}
 	}
@@ -128,21 +143,4 @@ func (e errIgnoringWriter) Write(p []byte) (int, error) {
 		_, _ = e.w.Write(p)
 	}
 	return len(p), nil
-}
-
-func render(p payload) string {
-	var parts []string
-	if p.Model.DisplayName != "" {
-		parts = append(parts, p.Model.DisplayName)
-	}
-	switch {
-	case p.Workspace.CurrentDir != "":
-		parts = append(parts, p.Workspace.CurrentDir)
-	case p.Workspace.ProjectDir != "":
-		parts = append(parts, p.Workspace.ProjectDir)
-	}
-	if len(parts) == 0 {
-		return placeholder
-	}
-	return strings.Join(parts, " · ")
 }
