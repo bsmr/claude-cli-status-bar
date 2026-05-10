@@ -1,0 +1,2 @@
+# claude-cli-status-bar
+
