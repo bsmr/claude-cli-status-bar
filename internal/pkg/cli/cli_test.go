@@ -1,0 +1,379 @@
+package cli_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/cli"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
+)
+
+type env struct {
+	paths cli.Paths
+}
+
+func newEnv(t *testing.T) *env {
+	t.Helper()
+	dir := t.TempDir()
+	return &env{
+		paths: cli.Paths{
+			Settings: filepath.Join(dir, "settings.json"),
+			Config:   filepath.Join(dir, "ccsb-config.json"),
+			Capture:  filepath.Join(dir, "captures"),
+			Self:     "/usr/local/bin/ccsb-test",
+		},
+	}
+}
+
+func (e *env) writeSettings(t *testing.T, body string) {
+	t.Helper()
+	if err := os.WriteFile(e.paths.Settings, []byte(body), 0o600); err != nil {
+		t.Fatalf("writeSettings: %v", err)
+	}
+}
+
+func (e *env) loadSettings(t *testing.T) claudesettings.Settings {
+	t.Helper()
+	s, err := claudesettings.Load(e.paths.Settings)
+	if err != nil {
+		t.Fatalf("loadSettings: %v", err)
+	}
+	return s
+}
+
+func (e *env) loadConfig(t *testing.T) config.Config {
+	t.Helper()
+	c, err := config.Load(e.paths.Config)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	return c
+}
+
+func (e *env) saveConfig(t *testing.T, c config.Config) {
+	t.Helper()
+	if err := config.Save(e.paths.Config, c); err != nil {
+		t.Fatalf("saveConfig: %v", err)
+	}
+}
+
+// Default (no-args) path: behaves like the proxy/fallback statusline.
+
+func TestRun_NoArgsRunsFallbackWhenNoProxyConfigured(t *testing.T) {
+	e := newEnv(t)
+	in := strings.NewReader(`{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`)
+	var out, errOut bytes.Buffer
+
+	if err := cli.Run(context.Background(), e.paths, nil, in, &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := strings.TrimRight(out.String(), "\n"); !strings.Contains(got, "Opus") {
+		t.Errorf("expected fallback render, got %q", got)
+	}
+}
+
+func TestRun_NoArgsUsesConfiguredProxy(t *testing.T) {
+	if _, err := exec.LookPath("cat"); err != nil {
+		t.Skip("cat not available")
+	}
+	e := newEnv(t)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "cat"}})
+
+	body := `{"model":{"display_name":"Opus"}}`
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, nil, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if out.String() != body {
+		t.Errorf("expected proxy passthrough, got %q", out.String())
+	}
+}
+
+// Install.
+
+func TestInstall_CapturesPreviousStatusLineAndPointsToSelf(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{
+		"statusLine": {"type":"command","command":"npx -y ccstatusline@latest"},
+		"theme": "dark"
+	}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	// Settings now points to ccsb.
+	s := e.loadSettings(t)
+	sl, ok := claudesettings.GetStatusLine(s)
+	if !ok {
+		t.Fatal("statusLine missing after install")
+	}
+	var slObj struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(sl, &slObj); err != nil {
+		t.Fatalf("statusLine: %v", err)
+	}
+	if slObj.Type != "command" || slObj.Command != e.paths.Self {
+		t.Errorf("statusLine: got %+v, want command=%s", slObj, e.paths.Self)
+	}
+
+	// Other top-level keys preserved.
+	if _, ok := s["theme"]; !ok {
+		t.Error("theme key was lost across install")
+	}
+
+	// Config has the backup and a parsed proxy command.
+	c := e.loadConfig(t)
+	if len(c.Backup.PreviousStatusLine) == 0 {
+		t.Error("backup.previous_status_line is empty")
+	}
+	if c.Proxy.Command != "npx" {
+		t.Errorf("proxy.command: got %q, want npx", c.Proxy.Command)
+	}
+	if !reflect.DeepEqual(c.Proxy.Args, []string{"-y", "ccstatusline@latest"}) {
+		t.Errorf("proxy.args: got %#v", c.Proxy.Args)
+	}
+}
+
+func TestInstall_NoExistingStatusLineIsAccepted(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"theme":"dark"}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	s := e.loadSettings(t)
+	if _, ok := claudesettings.GetStatusLine(s); !ok {
+		t.Error("statusLine should be set after install")
+	}
+	c := e.loadConfig(t)
+	if len(c.Backup.PreviousStatusLine) != 0 {
+		t.Errorf("backup.previous_status_line should be empty for absent prior, got %s", c.Backup.PreviousStatusLine)
+	}
+}
+
+func TestInstall_WhenSettingsFileAbsentCreatesIt(t *testing.T) {
+	e := newEnv(t)
+	// no settings.json at all
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	s := e.loadSettings(t)
+	if _, ok := claudesettings.GetStatusLine(s); !ok {
+		t.Error("statusLine should be set even when settings.json was absent")
+	}
+}
+
+func TestInstall_IsIdempotentWhenAlreadyHookedAndDoesNotOverwriteBackup(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{
+		"statusLine": {"type":"command","command":"some original"}
+	}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install (1): %v", err)
+	}
+	first := e.loadConfig(t).Backup.PreviousStatusLine
+
+	out.Reset()
+	errOut.Reset()
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install (2): %v", err)
+	}
+	second := e.loadConfig(t).Backup.PreviousStatusLine
+
+	if !bytes.Equal(first, second) {
+		t.Errorf("backup must not be overwritten on second install:\n first=%s\nsecond=%s", first, second)
+	}
+}
+
+// Uninstall.
+
+func TestUninstall_RestoresPreviousStatusLine(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{
+		"statusLine": {"type":"command","command":"old original"}
+	}`)
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	if err := cli.Run(context.Background(), e.paths, []string{"uninstall"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+
+	s := e.loadSettings(t)
+	sl, ok := claudesettings.GetStatusLine(s)
+	if !ok {
+		t.Fatal("statusLine missing after uninstall")
+	}
+	var slObj struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(sl, &slObj); err != nil {
+		t.Fatalf("statusLine: %v", err)
+	}
+	if slObj.Command != "old original" {
+		t.Errorf("expected restored command, got %q", slObj.Command)
+	}
+
+	// Backup should be cleared.
+	c := e.loadConfig(t)
+	if len(c.Backup.PreviousStatusLine) != 0 {
+		t.Errorf("backup should be cleared on uninstall, got %s", c.Backup.PreviousStatusLine)
+	}
+}
+
+func TestUninstall_RemovesStatusLineWhenNoPreviousExisted(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"theme":"dark"}`)
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	if err := cli.Run(context.Background(), e.paths, []string{"uninstall"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+
+	s := e.loadSettings(t)
+	if _, ok := claudesettings.GetStatusLine(s); ok {
+		t.Error("statusLine should be removed if there was no prior")
+	}
+	if _, ok := s["theme"]; !ok {
+		t.Error("unrelated keys must be preserved")
+	}
+}
+
+func TestUninstall_WithoutPriorInstallReturnsError(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"theme":"dark"}`)
+
+	var out, errOut bytes.Buffer
+	err := cli.Run(context.Background(), e.paths, []string{"uninstall"}, nil, &out, &errOut)
+	if err == nil {
+		t.Error("expected error when uninstalling without prior install")
+	}
+}
+
+// Status.
+
+func TestStatus_ReportsHookedAfterInstall(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{}`)
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"status"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out.String(), "hooked: yes") {
+		t.Errorf("expected 'hooked: yes' in status output, got:\n%s", out.String())
+	}
+}
+
+func TestStatus_ReportsNotHookedWhenSettingsPointElsewhere(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/elsewhere"}}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, []string{"status"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out.String(), "hooked: no") {
+		t.Errorf("expected 'hooked: no', got:\n%s", out.String())
+	}
+}
+
+// Help & unknown.
+
+func TestRun_UnknownSubcommandReturnsError(t *testing.T) {
+	e := newEnv(t)
+	var out, errOut bytes.Buffer
+	err := cli.Run(context.Background(), e.paths, []string{"frobnicate"}, nil, &out, &errOut)
+	if err == nil {
+		t.Error("expected error for unknown subcommand")
+	}
+	if !strings.Contains(err.Error(), "frobnicate") {
+		t.Errorf("error should reference the bad subcommand, got: %v", err)
+	}
+}
+
+func TestRun_HelpFlagsPrintUsage(t *testing.T) {
+	e := newEnv(t)
+	for _, flag := range []string{"-h", "--help", "help"} {
+		var out, errOut bytes.Buffer
+		err := cli.Run(context.Background(), e.paths, []string{flag}, nil, &out, &errOut)
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", flag, err)
+		}
+		if !strings.Contains(out.String(), "ccsb") {
+			t.Errorf("%s: usage output should mention ccsb, got:\n%s", flag, out.String())
+		}
+	}
+}
+
+// Path resolution.
+
+func TestResolvePaths_PrefersXDGOverHomeDefaults(t *testing.T) {
+	got := cli.ResolvePaths(cli.Env{
+		Home:          "/home/u",
+		XDGConfigHome: "/etc/xdg",
+		XDGStateHome:  "/var/state",
+		Self:          "/usr/local/bin/ccsb",
+	})
+	wantConfig := filepath.Join("/etc/xdg", "ccsb", "config.json")
+	wantCapture := filepath.Join("/var/state", "ccsb", "captures")
+	wantSettings := filepath.Join("/home/u", ".claude", "settings.json")
+	if got.Config != wantConfig {
+		t.Errorf("Config: got %q, want %q", got.Config, wantConfig)
+	}
+	if got.Capture != wantCapture {
+		t.Errorf("Capture: got %q, want %q", got.Capture, wantCapture)
+	}
+	if got.Settings != wantSettings {
+		t.Errorf("Settings: got %q, want %q", got.Settings, wantSettings)
+	}
+	if got.Self != "/usr/local/bin/ccsb" {
+		t.Errorf("Self: got %q", got.Self)
+	}
+}
+
+// Sanity: errors.As works with the unknown-subcommand error to keep callers
+// from depending on string matching forever.
+func TestRun_UnknownSubcommandErrorIsTyped(t *testing.T) {
+	e := newEnv(t)
+	err := cli.Run(context.Background(), e.paths, []string{"nope"}, nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ue *cli.UnknownSubcommandError
+	if !errors.As(err, &ue) {
+		t.Errorf("expected *cli.UnknownSubcommandError, got %T", err)
+	}
+	if ue != nil && ue.Name != "nope" {
+		t.Errorf("Name: got %q, want %q", ue.Name, "nope")
+	}
+}
