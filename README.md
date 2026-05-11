@@ -6,7 +6,7 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** active development — `0.1.4`. Proxy mode, capture, hook
+> **Status:** active development — `0.1.6`. Proxy mode, capture, hook
 > management, a configurable native renderer, and a `ccsb mode` subcommand
 > to switch between proxy and native rendering are all functional. When no
 > proxy is configured, the native renderer drives the status line directly
@@ -80,7 +80,9 @@ manual edits since install are never overwritten.
 | Captures | `${XDG_STATE_HOME:-$HOME/.local/state}/ccsb/captures/` |
 
 The config file holds the proxy command/args plus a verbatim backup of the
-previous `statusLine` value so `uninstall` can restore it.
+previous `statusLine` value so `uninstall` can restore it. The `render`
+section and the full segment vocabulary are documented in
+[`docs/configuration.md`](docs/configuration.md).
 
 ## Roadmap
 
@@ -90,9 +92,7 @@ previous `statusLine` value so `uninstall` can restore it.
 - **Next** — make `ccsb install` pick native mode by default when the
   existing `statusLine` is the canonical `npx -y ccstatusline@latest`
   default, so fresh installs no longer need an explicit `ccsb mode native`.
-  Document the segment vocabulary and `config.json` schema alongside the
-  code, and keep growing the captured-payload corpus the renderer tests
-  against.
+  Keep growing the captured-payload corpus the renderer tests against.
 
 ## Develop
 
