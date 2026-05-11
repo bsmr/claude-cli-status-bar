@@ -6,14 +6,21 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** early development — `0.1.0`. The proxy and capture paths are
-> functional; the built-in renderer currently emits a minimal
-> `<model> · <dir>` fallback when no proxy is configured.
+> **Status:** active development — `0.1.2`. Proxy mode, capture, hook
+> management, and a configurable native renderer are functional. When no
+> proxy is configured, the native renderer drives the status line directly
+> from the Claude Code payload.
 
 ## What it does
 
 - **Proxy mode** — invoked by Claude Code on stdin, forwards the payload to a
   configured child command and prints its stdout verbatim.
+- **Native renderer** — when no proxy is configured, renders the status line
+  directly from the JSON payload. Rows and segments (`model`, `context`,
+  `cost`, `duration`, `lines`, `cwd`, `git_branch`, `limit_5h`, `limit_7d`,
+  `mode`, `effort`, `session_name`, `output_style`, `text`) are configurable;
+  the default layout shows model + context bar, cost + rate-limit countdowns,
+  and git branch + working directory.
 - **Capture** — every invocation writes the raw stdin JSON to
   `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, the rendered
   statusLine bytes to `.out` and any proxy stderr to `.err`, all sharing the
@@ -69,11 +76,12 @@ previous `statusLine` value so `uninstall` can restore it.
 
 ## Roadmap
 
-- **0.1.x** — proxy mode, capture, install/uninstall machinery (current).
-- **Next** — replace the `<model> · <dir>` fallback with a native renderer that
-  handles the full Claude Code payload (cost, output style, git state, etc.),
-  validated against captured payloads. The longer-term goal is to remove the
-  dependency on `npx` and Node.js entirely.
+- **0.1.x** — proxy mode, capture, install/uninstall machinery, and a
+  configurable native renderer covering the Claude Code payload (current).
+- **Next** — drop the `npx`/Node round-trip on the install path: make the
+  native renderer the default when no proxy is already present, document the
+  segment vocabulary and config schema, and validate the renderer against the
+  growing corpus of captured payloads.
 
 ## Develop
 
