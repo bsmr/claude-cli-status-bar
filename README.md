@@ -6,8 +6,9 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** active development — `0.1.2`. Proxy mode, capture, hook
-> management, and a configurable native renderer are functional. When no
+> **Status:** active development — `0.1.4`. Proxy mode, capture, hook
+> management, a configurable native renderer, and a `ccsb mode` subcommand
+> to switch between proxy and native rendering are all functional. When no
 > proxy is configured, the native renderer drives the status line directly
 > from the Claude Code payload.
 
@@ -21,6 +22,10 @@ self-contained renderer that drops the `npx` / Node round-trip on every update.
   `mode`, `effort`, `session_name`, `output_style`, `text`) are configurable;
   the default layout shows model + context bar, cost + rate-limit countdowns,
   and git branch + working directory.
+- **Mode switching** — `ccsb mode native` clears the proxy block in ccsb's
+  config so the native renderer takes over; `ccsb mode proxy` reinstates it
+  (defaulting to `npx -y ccstatusline@latest` or a given command and args).
+  `ccsb mode` with no argument prints the active mode.
 - **Capture** — every invocation writes the raw stdin JSON to
   `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, the rendered
   statusLine bytes to `.out` and any proxy stderr to `.err`, all sharing the
@@ -44,7 +49,10 @@ Requires Go 1.26 or newer.
 
 ```bash
 ccsb install     # save current statusLine, replace it with ccsb
-ccsb status      # print resolved paths, hook state, current proxy/backup
+ccsb mode        # print current mode (native or proxy)
+ccsb mode native # clear proxy block so the native renderer drives ccsb
+ccsb mode proxy  # restore proxy mode (default: npx -y ccstatusline@latest)
+ccsb status      # print resolved paths, hook state, mode, proxy/backup
 ccsb uninstall   # restore the previous statusLine byte-for-byte
 ccsb help        # subcommand summary
 ```
@@ -76,12 +84,15 @@ previous `statusLine` value so `uninstall` can restore it.
 
 ## Roadmap
 
-- **0.1.x** — proxy mode, capture, install/uninstall machinery, and a
-  configurable native renderer covering the Claude Code payload (current).
-- **Next** — drop the `npx`/Node round-trip on the install path: make the
-  native renderer the default when no proxy is already present, document the
-  segment vocabulary and config schema, and validate the renderer against the
-  growing corpus of captured payloads.
+- **0.1.x** — proxy mode, capture, install/uninstall machinery, a
+  configurable native renderer, and the `ccsb mode` subcommand for switching
+  between native and proxy rendering (current).
+- **Next** — make `ccsb install` pick native mode by default when the
+  existing `statusLine` is the canonical `npx -y ccstatusline@latest`
+  default, so fresh installs no longer need an explicit `ccsb mode native`.
+  Document the segment vocabulary and `config.json` schema alongside the
+  code, and keep growing the captured-payload corpus the renderer tests
+  against.
 
 ## Develop
 
