@@ -192,13 +192,18 @@ type renderEnv struct {
 // renderSegment dispatches one segment via the registry. Unknown types
 // render "?<type>?" so typos are visible without breaking the row. The
 // effective FG comes from chooseFG so Segment.Thresholds can override
-// the static FG based on the segment's percentage metric.
+// the static FG based on the segment's percentage metric. Segments
+// whose body is empty short-circuit to "" so they neither contribute
+// to the row nor emit styling escapes for an invisible payload.
 func renderSegment(p *payload, s Segment, env renderEnv) string {
 	fn, ok := segmentFuncs[s.Type]
 	if !ok {
 		return "?" + s.Type + "?"
 	}
 	out := fn(p, s, env)
+	if out == "" {
+		return ""
+	}
 	return style(out, chooseFG(s, p), s.BG, s.Bold, env.colorEnabled)
 }
 

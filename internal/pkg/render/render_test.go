@@ -284,3 +284,37 @@ func TestRender_ContextThresholdProducesExpectedAnsi(t *testing.T) {
 		t.Errorf("static fg 245 should be overridden, but appears in output %q", got)
 	}
 }
+
+func TestRender_StyledEmptySegmentEmitsNothing(t *testing.T) {
+	// A git_branch segment outside a git repo returns "" from its renderer.
+	// Even with FG/Bold set, the row must not emit any ANSI escapes —
+	// styling an empty string just produces dead bytes.
+	cfg := Config{Rows: [][]Segment{{
+		{Type: "git_branch", FG: "33", Bold: true},
+	}}}
+	got, err := Render(Options{Config: cfg, Cwd: t.TempDir()}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("styled-empty segment leaked ANSI: %q", got)
+	}
+	if got != "" {
+		t.Errorf("row with only an empty segment must be empty, got %q", got)
+	}
+}
+
+func TestRender_StyledNonEmptySegmentStillWraps(t *testing.T) {
+	// Regression: the empty-text early-return must not affect normal segments.
+	cfg := Config{Rows: [][]Segment{{
+		{Type: "text", Label: "hello", FG: "33"},
+	}}}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := "\x1b[38;5;33mhello\x1b[0m"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
