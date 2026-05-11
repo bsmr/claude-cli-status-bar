@@ -26,16 +26,23 @@ func bg256(n string) string {
 
 // style wraps s in optional bold + foreground + background escapes,
 // terminated by a reset. When colorEnabled is false, s is returned verbatim.
+// If none of bold, fg, or bg produces an opening escape, s is also returned
+// verbatim so segments without styling do not emit a stray trailing reset.
 func style(s, fg, bg string, bold, colorEnabled bool) string {
 	if !colorEnabled {
+		return s
+	}
+	fgEsc := fg256(fg)
+	bgEsc := bg256(bg)
+	if !bold && fgEsc == "" && bgEsc == "" {
 		return s
 	}
 	var b strings.Builder
 	if bold {
 		b.WriteString("\x1b[1m")
 	}
-	b.WriteString(fg256(fg))
-	b.WriteString(bg256(bg))
+	b.WriteString(fgEsc)
+	b.WriteString(bgEsc)
 	b.WriteString(s)
 	b.WriteString(reset)
 	return b.String()

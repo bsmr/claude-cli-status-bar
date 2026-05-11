@@ -42,11 +42,20 @@ func TestStyle_AppliesAllAttributes(t *testing.T) {
 	}
 }
 
-func TestStyle_OmitsEmptyAttributes(t *testing.T) {
-	if got := style("hi", "", "", false, true); got != "hi\x1b[0m" {
-		t.Errorf("with no attrs expected reset only, got %q", got)
+func TestStyle_NoAttrsReturnsRawText(t *testing.T) {
+	if got := style("hi", "", "", false, true); got != "hi" {
+		t.Errorf("with no attrs expected raw text, got %q", got)
 	}
+}
+
+func TestStyle_WrapsWhenAnySingleAttributeIsSet(t *testing.T) {
 	if got := style("hi", "131", "", false, true); got != "\x1b[38;5;131mhi\x1b[0m" {
 		t.Errorf("fg only: got %q", got)
+	}
+	if got := style("hi", "", "220", false, true); got != "\x1b[48;5;220mhi\x1b[0m" {
+		t.Errorf("bg only: got %q", got)
+	}
+	if got := style("hi", "", "", true, true); got != "\x1b[1mhi\x1b[0m" {
+		t.Errorf("bold only: got %q", got)
 	}
 }
