@@ -89,6 +89,35 @@ Per-segment additional fields are documented under each type below.
 | `format`        | `cwd`, `cost`                        | Per-type format string or shape selector.            |
 | `show_1m_flag`  | `model`                              | Appends `" 1M"` when the payload's `exceeds_200k_tokens` is true. |
 | `style`         | `context`, `limit_5h`, `limit_7d`    | Selects between presentation variants.               |
+| `thresholds`    | `context`, `limit_5h`, `limit_7d`    | Per-segment percentage-driven `fg` overrides. See [Thresholds](#thresholds). |
+
+### Thresholds
+
+For percentage-bearing segments (`context`, `limit_5h`, `limit_7d`), the
+`thresholds` field lets the foreground color react to the current fill
+state. Each entry is a `{min, fg}` pair; when the segment's percentage
+metric reaches `min`, that entry's `fg` is a candidate override. The
+highest-`min` matching entry wins. Entries with `fg: ""` are skipped (as
+if absent), and segments without a percentage metric (`model`, `cost`,
+`cwd`, …) ignore the field entirely.
+
+```json
+{"type": "context", "style": "bar+pct", "fg": "245",
+ "thresholds": [
+   {"min": 70, "fg": "136"},
+   {"min": 90, "fg": "160"}
+ ]}
+```
+
+Reading this configuration: below 70% used, the segment is rendered in
+the static `fg` (`245`, neutral grey); from 70% it switches to `136`
+(amber), and from 90% to `160` (red). The bar, percentage, and token
+counts all wrap in the chosen color — thresholds drive the segment's
+overall `fg`, not just the percentage number.
+
+Threshold ordering inside the array does not matter; the renderer picks
+by `min`, not by position. `bg` and `bold` are not part of the
+threshold schema — pick those statically on the segment.
 
 ### Segment reference
 
@@ -196,7 +225,8 @@ prompt size after caching).
 | `"pct"`     | `26%`                                   |
 
 Token counts are compacted: `1234` → `"1k"`, `1_500_000` → `"1.5M"`. Hidden
-when both `used_percentage` and `context_window_size` are zero.
+when both `used_percentage` and `context_window_size` are zero. Supports
+[`thresholds`](#thresholds) to switch `fg` based on `used_percentage`.
 
 ```json
 {"type": "context", "style": "bar+pct"}
@@ -219,7 +249,8 @@ Countdown format mirrors `duration`: drop zero higher units, keep at most
 two adjacent units (`"4d1h"`, `"2h15m"`, `"45m"`). Reaches `"now"` once the
 reset time has passed. Percentages with fractional parts < 0.0005 render
 as integers (`"100%"` not `"100.0%"`). Hidden when both `used_percentage`
-and `resets_at` are zero (no data).
+and `resets_at` are zero (no data). Both segments support
+[`thresholds`](#thresholds) to switch `fg` based on `used_percentage`.
 
 ```json
 {"type": "limit_5h"}
@@ -350,6 +381,36 @@ Opus 4.7 · 26% · $26.05 · main
 `mode` renders 🧠/⚡ when the corresponding flag is set and disappears
 otherwise — handy for keeping the row width stable while still surfacing
 thinking mode.
+
+### Percentage thresholds
+
+Context and rate-limit segments switch color as the metric crosses
+breakpoints — neutral grey under 70%, amber at 70-90%, red above 90%:
+
+```json
+{
+  "render": {
+    "rows": [
+      [
+        {"type": "model", "fg": "33", "bold": true, "show_1m_flag": true},
+        {"type": "context", "style": "bar+pct", "fg": "245",
+         "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]}
+      ],
+      [
+        {"type": "cost", "fg": "136", "bold": true},
+        {"type": "limit_5h", "fg": "245",
+         "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
+        {"type": "limit_7d", "fg": "245",
+         "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]}
+      ],
+      [
+        {"type": "git_branch", "fg": "33"},
+        {"type": "cwd", "fg": "245"}
+      ]
+    ]
+  }
+}
+```
 
 ### Bar-only context, bar+pct limits
 
