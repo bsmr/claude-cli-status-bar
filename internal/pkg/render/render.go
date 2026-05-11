@@ -30,6 +30,20 @@ type Segment struct {
 	// Type-specific knobs:
 	Show1MFlag bool   `json:"show_1m_flag,omitempty"` // type=model
 	Style      string `json:"style,omitempty"`        // type=context|limit_5h|limit_7d
+
+	// Thresholds let percentage-bearing segments (context, limit_5h,
+	// limit_7d) override FG based on the current used-percentage. The
+	// highest matching Min wins; thresholds with empty FG are skipped;
+	// segments without a percentage metric ignore the field.
+	Thresholds []Threshold `json:"thresholds,omitempty"`
+}
+
+// Threshold is one entry in Segment.Thresholds. Min is a percentage
+// value (0-100, inclusive on the lower bound) the segment's metric must
+// reach for FG to apply.
+type Threshold struct {
+	Min float64 `json:"min"`
+	FG  string  `json:"fg,omitempty"`
 }
 
 // Options configures a single Render call.
@@ -176,14 +190,66 @@ type renderEnv struct {
 }
 
 // renderSegment dispatches one segment via the registry. Unknown types
-// render "?<type>?" so typos are visible without breaking the row.
+// render "?<type>?" so typos are visible without breaking the row. The
+// effective FG comes from chooseFG so Segment.Thresholds can override
+// the static FG based on the segment's percentage metric.
 func renderSegment(p *payload, s Segment, env renderEnv) string {
 	fn, ok := segmentFuncs[s.Type]
 	if !ok {
 		return "?" + s.Type + "?"
 	}
 	out := fn(p, s, env)
-	return style(out, s.FG, s.BG, s.Bold, env.colorEnabled)
+	return style(out, chooseFG(s, p), s.BG, s.Bold, env.colorEnabled)
+}
+
+// chooseFG picks the foreground color for a segment, honouring
+// Segment.Thresholds. Behaviour:
+//
+//   - No thresholds, or segment without a percentage metric, or no
+//     threshold matching: returns Segment.FG verbatim.
+//   - Multiple matching thresholds: the one with the highest Min wins.
+//   - A threshold with FG=="" is skipped, as if absent.
+func chooseFG(s Segment, p *payload) string {
+	if len(s.Thresholds) == 0 {
+		return s.FG
+	}
+	pct, ok := segmentMetric(s.Type, p)
+	if !ok {
+		return s.FG
+	}
+	chosen := s.FG
+	var chosenMin float64
+	matched := false
+	for _, t := range s.Thresholds {
+		if t.FG == "" {
+			continue
+		}
+		if pct < t.Min {
+			continue
+		}
+		if !matched || t.Min > chosenMin {
+			chosen = t.FG
+			chosenMin = t.Min
+			matched = true
+		}
+	}
+	return chosen
+}
+
+// segmentMetric returns the percentage value (0-100) that drives a
+// percentage-aware segment's threshold logic. The boolean is false for
+// segments that have no such metric — in that case Thresholds are
+// ignored.
+func segmentMetric(typ string, p *payload) (float64, bool) {
+	switch typ {
+	case "context":
+		return p.Context.UsedPercentage, true
+	case "limit_5h":
+		return p.Limits.FiveHour.UsedPercentage, true
+	case "limit_7d":
+		return p.Limits.SevenDay.UsedPercentage, true
+	}
+	return 0, false
 }
 
 // lastResort renders a single line from whatever fields we can salvage when

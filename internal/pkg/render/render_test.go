@@ -160,3 +160,127 @@ func TestRender_GoldenFixtures(t *testing.T) {
 		})
 	}
 }
+
+func TestChooseFG_NoThresholdsReturnsStaticFG(t *testing.T) {
+	s := Segment{Type: "context", FG: "75"}
+	p := &payload{Context: contextF{UsedPercentage: 95}}
+	if got := chooseFG(s, p); got != "75" {
+		t.Errorf("got %q, want %q", got, "75")
+	}
+}
+
+func TestChooseFG_HighestMatchingMinWins(t *testing.T) {
+	s := Segment{
+		Type: "context",
+		FG:   "245",
+		Thresholds: []Threshold{
+			{Min: 70, FG: "136"},
+			{Min: 90, FG: "160"},
+		},
+	}
+	// 75% → only min=70 matches → 136.
+	p := &payload{Context: contextF{UsedPercentage: 75}}
+	if got := chooseFG(s, p); got != "136" {
+		t.Errorf("at 75: got %q, want %q", got, "136")
+	}
+	// 92% → both match; higher-min (90) wins → 160.
+	p.Context.UsedPercentage = 92
+	if got := chooseFG(s, p); got != "160" {
+		t.Errorf("at 92: got %q, want %q", got, "160")
+	}
+	// Threshold-list order must not matter; reverse and rerun.
+	s.Thresholds = []Threshold{
+		{Min: 90, FG: "160"},
+		{Min: 70, FG: "136"},
+	}
+	if got := chooseFG(s, p); got != "160" {
+		t.Errorf("reversed order at 92: got %q, want %q", got, "160")
+	}
+}
+
+func TestChooseFG_BelowAllThresholdsUsesStaticFG(t *testing.T) {
+	s := Segment{
+		Type: "context",
+		FG:   "245",
+		Thresholds: []Threshold{
+			{Min: 70, FG: "136"},
+			{Min: 90, FG: "160"},
+		},
+	}
+	p := &payload{Context: contextF{UsedPercentage: 25}}
+	if got := chooseFG(s, p); got != "245" {
+		t.Errorf("got %q, want %q", got, "245")
+	}
+}
+
+func TestChooseFG_EmptyFGThresholdIsSkipped(t *testing.T) {
+	s := Segment{
+		Type: "context",
+		FG:   "245",
+		Thresholds: []Threshold{
+			{Min: 70, FG: ""}, // skipped — no useful override
+			{Min: 90, FG: "160"},
+		},
+	}
+	// 75% would match the 70-threshold, but its FG is empty → fall through.
+	p := &payload{Context: contextF{UsedPercentage: 75}}
+	if got := chooseFG(s, p); got != "245" {
+		t.Errorf("at 75 with empty FG threshold: got %q, want %q", got, "245")
+	}
+	// 95% still matches the 90-threshold normally.
+	p.Context.UsedPercentage = 95
+	if got := chooseFG(s, p); got != "160" {
+		t.Errorf("at 95: got %q, want %q", got, "160")
+	}
+}
+
+func TestChooseFG_NonMetricSegmentIgnoresThresholds(t *testing.T) {
+	// model has no percentage metric → thresholds must not change anything.
+	s := Segment{
+		Type:       "model",
+		FG:         "75",
+		Thresholds: []Threshold{{Min: 0, FG: "160"}},
+	}
+	p := &payload{Context: contextF{UsedPercentage: 95}}
+	if got := chooseFG(s, p); got != "75" {
+		t.Errorf("got %q, want %q", got, "75")
+	}
+}
+
+func TestChooseFG_Limit5hAndLimit7dUseTheirOwnPercentage(t *testing.T) {
+	p := &payload{Limits: limitsF{
+		FiveHour: rateLimitF{UsedPercentage: 95},
+		SevenDay: rateLimitF{UsedPercentage: 20},
+	}}
+	s5h := Segment{Type: "limit_5h", FG: "245",
+		Thresholds: []Threshold{{Min: 90, FG: "160"}}}
+	if got := chooseFG(s5h, p); got != "160" {
+		t.Errorf("limit_5h at 95: got %q, want %q", got, "160")
+	}
+	s7d := Segment{Type: "limit_7d", FG: "245",
+		Thresholds: []Threshold{{Min: 90, FG: "160"}}}
+	if got := chooseFG(s7d, p); got != "245" {
+		t.Errorf("limit_7d at 20: got %q, want %q", got, "245")
+	}
+}
+
+func TestRender_ContextThresholdProducesExpectedAnsi(t *testing.T) {
+	cfg := Config{Rows: [][]Segment{{
+		{Type: "context", Style: "pct", FG: "245",
+			Thresholds: []Threshold{
+				{Min: 70, FG: "136"},
+				{Min: 90, FG: "160"},
+			}},
+	}}}
+	raw := []byte(`{"context_window":{"used_percentage":95,"context_window_size":1000000,"total_input_tokens":950000}}`)
+	got, err := Render(Options{Config: cfg}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(got, "\x1b[38;5;160m") {
+		t.Errorf("expected \\x1b[38;5;160m (fg 160) in output, got %q", got)
+	}
+	if strings.Contains(got, "\x1b[38;5;245m") {
+		t.Errorf("static fg 245 should be overridden, but appears in output %q", got)
+	}
+}
