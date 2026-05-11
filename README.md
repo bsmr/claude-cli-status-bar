@@ -6,11 +6,12 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** active development — `0.1.6`. Proxy mode, capture, hook
+> **Status:** active development — `0.1.8`. Proxy mode, capture, hook
 > management, a configurable native renderer, and a `ccsb mode` subcommand
-> to switch between proxy and native rendering are all functional. When no
-> proxy is configured, the native renderer drives the status line directly
-> from the Claude Code payload.
+> to switch between proxy and native rendering are all functional. `ccsb
+> install` defaults to native mode when the previous `statusLine` was the
+> canonical `npx -y ccstatusline@latest`; otherwise it seeds proxy mode
+> so the prior renderer keeps working.
 
 ## What it does
 
@@ -57,16 +58,20 @@ ccsb uninstall   # restore the previous statusLine byte-for-byte
 ccsb help        # subcommand summary
 ```
 
-When `install` finds an existing entry like
+`install` saves the existing `statusLine` value verbatim into ccsb's config
+as the backup and rewrites `statusLine.command` to the absolute path of the
+ccsb binary; other top-level keys in `settings.json` are preserved. If the
+previous entry was the canonical
 
 ```json
 { "statusLine": { "type": "command", "command": "npx -y ccstatusline@latest" } }
 ```
 
-it copies the value into ccsb's config as the backup, derives
-`proxy.command = "npx"` / `proxy.args = ["-y", "ccstatusline@latest"]` for the
-forwarding path, and rewrites `statusLine.command` to the absolute path of the
-ccsb binary. Other top-level keys in `settings.json` are preserved.
+ccsb defaults to native mode — the backup stays for `uninstall`, but no
+proxy command is configured and the in-binary renderer drives the status
+line. For any other command, the existing argv is seeded as `proxy.command`
+/ `proxy.args` so ccsb keeps forwarding to it. Switch any time with
+`ccsb mode native` or `ccsb mode proxy <cmd args>`.
 
 `uninstall` only proceeds when `statusLine` currently points at this binary —
 manual edits since install are never overwritten.
@@ -89,10 +94,8 @@ section and the full segment vocabulary are documented in
 - **0.1.x** — proxy mode, capture, install/uninstall machinery, a
   configurable native renderer, and the `ccsb mode` subcommand for switching
   between native and proxy rendering (current).
-- **Next** — make `ccsb install` pick native mode by default when the
-  existing `statusLine` is the canonical `npx -y ccstatusline@latest`
-  default, so fresh installs no longer need an explicit `ccsb mode native`.
-  Keep growing the captured-payload corpus the renderer tests against.
+- **Next** — keep growing the captured-payload corpus the renderer tests
+  against. The 0.1.x feature surface is otherwise stable.
 
 ## Develop
 
