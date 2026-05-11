@@ -118,9 +118,14 @@ func runInstall(p Paths, stdout io.Writer) error {
 	if !alreadyHooked {
 		if existing, ok := claudesettings.GetStatusLine(s); ok {
 			cfg.Backup.PreviousStatusLine = existing
-			if cmd, args, ok := extractCommand(existing); ok {
-				cfg.Proxy.Command = cmd
-				cfg.Proxy.Args = args
+			// When the previous statusLine is the canonical ccstatusline
+			// default, leave the proxy block empty so install lands in
+			// native mode. The backup is still preserved for uninstall.
+			if !isCanonicalCcstatusline(existing) {
+				if cmd, args, ok := extractCommand(existing); ok {
+					cfg.Proxy.Command = cmd
+					cfg.Proxy.Args = args
+				}
 			}
 		} else {
 			cfg.Backup.PreviousStatusLine = nil
@@ -279,4 +284,24 @@ func extractCommand(raw json.RawMessage) (cmd string, args []string, ok bool) {
 		return "", nil, false
 	}
 	return fields[0], fields[1:], true
+}
+
+// canonicalCcstatusline is the documented npx invocation that bootstraps
+// ccstatusline from npm — the shape Claude Code's quick-start instructions
+// produce. install treats it as a sentinel and defaults to native mode
+// instead of seeding it into proxy mode.
+const canonicalCcstatusline = "npx -y ccstatusline@latest"
+
+// isCanonicalCcstatusline reports whether raw is a statusLine entry whose
+// command string is exactly the canonical ccstatusline invocation. Extra
+// top-level fields (e.g. "padding") are ignored.
+func isCanonicalCcstatusline(raw json.RawMessage) bool {
+	var obj struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false
+	}
+	return obj.Type == "command" && strings.TrimSpace(obj.Command) == canonicalCcstatusline
 }

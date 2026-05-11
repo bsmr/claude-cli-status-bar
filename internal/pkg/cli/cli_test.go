@@ -101,7 +101,7 @@ func TestRun_NoArgsUsesConfiguredProxy(t *testing.T) {
 
 // Install.
 
-func TestInstall_CapturesPreviousStatusLineAndPointsToSelf(t *testing.T) {
+func TestInstall_CanonicalCcstatuslineDefaultsToNative(t *testing.T) {
 	e := newEnv(t)
 	e.writeSettings(t, `{
 		"statusLine": {"type":"command","command":"npx -y ccstatusline@latest"},
@@ -135,16 +135,66 @@ func TestInstall_CapturesPreviousStatusLineAndPointsToSelf(t *testing.T) {
 		t.Error("theme key was lost across install")
 	}
 
-	// Config has the backup and a parsed proxy command.
+	// Backup is preserved so uninstall can restore the canonical line.
 	c := e.loadConfig(t)
 	if len(c.Backup.PreviousStatusLine) == 0 {
 		t.Error("backup.previous_status_line is empty")
 	}
+
+	// Canonical ccstatusline is detected: install defaults to native mode
+	// instead of seeding the proxy block from the previous command.
+	if c.Proxy.Command != "" {
+		t.Errorf("proxy.command should be empty for canonical ccstatusline, got %q", c.Proxy.Command)
+	}
+	if c.Proxy.Args != nil {
+		t.Errorf("proxy.args should be nil for canonical ccstatusline, got %#v", c.Proxy.Args)
+	}
+}
+
+func TestInstall_CanonicalCcstatuslineWithExtraFieldsDetected(t *testing.T) {
+	e := newEnv(t)
+	// Real-world shape with the `padding` field Claude Code sometimes adds.
+	e.writeSettings(t, `{
+		"statusLine": {"type":"command","command":"npx -y ccstatusline@latest","padding":0}
+	}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	c := e.loadConfig(t)
+	if c.Proxy.Command != "" {
+		t.Errorf("proxy.command should be empty, got %q", c.Proxy.Command)
+	}
+	if c.Proxy.Args != nil {
+		t.Errorf("proxy.args should be nil, got %#v", c.Proxy.Args)
+	}
+	if len(c.Backup.PreviousStatusLine) == 0 {
+		t.Error("backup.previous_status_line should still be saved")
+	}
+}
+
+func TestInstall_NonCanonicalCommandSeedsProxy(t *testing.T) {
+	e := newEnv(t)
+	// Different command (no -y flag) — not the canonical default, so install
+	// must still seed the proxy block from it so the user keeps getting
+	// the same external rendering they had before install.
+	e.writeSettings(t, `{
+		"statusLine": {"type":"command","command":"npx ccstatusline"}
+	}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	c := e.loadConfig(t)
 	if c.Proxy.Command != "npx" {
 		t.Errorf("proxy.command: got %q, want npx", c.Proxy.Command)
 	}
-	if !reflect.DeepEqual(c.Proxy.Args, []string{"-y", "ccstatusline@latest"}) {
-		t.Errorf("proxy.args: got %#v", c.Proxy.Args)
+	if !reflect.DeepEqual(c.Proxy.Args, []string{"ccstatusline"}) {
+		t.Errorf("proxy.args: got %#v, want [ccstatusline]", c.Proxy.Args)
 	}
 }
 
