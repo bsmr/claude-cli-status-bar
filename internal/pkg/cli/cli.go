@@ -63,7 +63,7 @@ type UnknownSubcommandError struct {
 }
 
 func (e *UnknownSubcommandError) Error() string {
-	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, help)", e.Name)
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, help)", e.Name)
 }
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
@@ -82,6 +82,8 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runUninstall(p, stdout)
 	case "status":
 		return runStatus(p, stdout)
+	case "mode":
+		return runMode(p, args[1:], stdout)
 	default:
 		return &UnknownSubcommandError{Name: args[0]}
 	}
@@ -196,6 +198,7 @@ func runStatus(p Paths, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "ccsb: settings: %s\n", p.Settings)
 	fmt.Fprintf(stdout, "ccsb: config:   %s\n", p.Config)
 	fmt.Fprintf(stdout, "ccsb: capture:  %s\n", p.Capture)
+	fmt.Fprintf(stdout, "ccsb: mode:     %s\n", currentMode(cfg))
 	if cfg.Proxy.Command != "" {
 		args := strings.Join(cfg.Proxy.Args, " ")
 		fmt.Fprintf(stdout, "ccsb: proxy:    %s %s\n", cfg.Proxy.Command, args)
@@ -230,6 +233,10 @@ Subcommands:
   uninstall   Restore the previous statusLine from the saved backup.
   status      Print whether settings.json points at ccsb and show the
               current proxy/backup state.
+  mode        Print the current mode (native or proxy) when invoked with no
+              argument. With "native", clear the proxy block; with "proxy",
+              set it to "npx -y ccstatusline@latest" by default or to the
+              given command and arguments.
   help        Print this message.
 `
 	fmt.Fprint(w, help)
