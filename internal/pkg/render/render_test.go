@@ -318,3 +318,194 @@ func TestRender_StyledNonEmptySegmentStillWraps(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestWrapPct_AllTargetIsNoOp(t *testing.T) {
+	s := Segment{
+		Type: "context",
+		FG:   "245",
+		Thresholds: []Threshold{
+			{Min: 90, FG: "160"},
+		},
+		// ThresholdTarget omitted → defaults to "all".
+	}
+	p := &payload{Context: contextF{UsedPercentage: 95}}
+	if got := wrapPct("95%", s, p, true); got != "95%" {
+		t.Errorf("got %q, want raw text", got)
+	}
+}
+
+func TestWrapPct_PctTargetWithoutMatchIsNoOp(t *testing.T) {
+	s := Segment{
+		Type:            "context",
+		FG:              "245",
+		ThresholdTarget: "pct",
+		Thresholds: []Threshold{
+			{Min: 90, FG: "160"},
+		},
+	}
+	// 50% is below the 90 threshold → no override → no wrap.
+	p := &payload{Context: contextF{UsedPercentage: 50}}
+	if got := wrapPct("50%", s, p, true); got != "50%" {
+		t.Errorf("got %q, want raw text", got)
+	}
+}
+
+func TestWrapPct_PctTargetMatchWithStaticFG(t *testing.T) {
+	s := Segment{
+		Type:            "context",
+		FG:              "245",
+		ThresholdTarget: "pct",
+		Thresholds: []Threshold{
+			{Min: 90, FG: "160"},
+		},
+	}
+	p := &payload{Context: contextF{UsedPercentage: 95}}
+	want := "\x1b[38;5;160m95%\x1b[38;5;245m"
+	if got := wrapPct("95%", s, p, true); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestWrapPct_PctTargetMatchWithEmptyFG(t *testing.T) {
+	s := Segment{
+		Type:            "context",
+		FG:              "", // no static foreground
+		ThresholdTarget: "pct",
+		Thresholds: []Threshold{
+			{Min: 90, FG: "160"},
+		},
+	}
+	p := &payload{Context: contextF{UsedPercentage: 95}}
+	// Closer falls back to terminal-default SGR.
+	want := "\x1b[38;5;160m95%\x1b[39m"
+	if got := wrapPct("95%", s, p, true); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestWrapPct_NoColorReturnsRawText(t *testing.T) {
+	s := Segment{
+		Type:            "context",
+		FG:              "245",
+		ThresholdTarget: "pct",
+		Thresholds: []Threshold{
+			{Min: 90, FG: "160"},
+		},
+	}
+	p := &payload{Context: contextF{UsedPercentage: 95}}
+	if got := wrapPct("95%", s, p, false); got != "95%" {
+		t.Errorf("got %q, want raw text", got)
+	}
+}
+
+func TestWrapPct_InvalidThresholdFGIsNoOp(t *testing.T) {
+	// chooseFG does not validate threshold FG values; a malformed
+	// string (here "999", which fg256 rejects because 999 > 255)
+	// must short-circuit wrapPct back to the raw pct text rather
+	// than emitting a broken escape sequence.
+	s := Segment{
+		Type:            "context",
+		FG:              "245",
+		ThresholdTarget: "pct",
+		Thresholds:      []Threshold{{Min: 0, FG: "999"}},
+	}
+	p := &payload{Context: contextF{UsedPercentage: 50}}
+	if got := wrapPct("50%", s, p, true); got != "50%" {
+		t.Errorf("got %q, want raw text", got)
+	}
+}
+
+func TestRender_ContextPctTargetColorsOnlyDigits(t *testing.T) {
+	cfg := Config{Rows: [][]Segment{{
+		{
+			Type:            "context",
+			Style:           "bar+pct",
+			FG:              "245",
+			ThresholdTarget: "pct",
+			Thresholds: []Threshold{
+				{Min: 90, FG: "160"},
+			},
+		},
+	}}}
+	raw := []byte(`{"context_window":{"used_percentage":95,"context_window_size":1000000,"total_input_tokens":950000}}`)
+	got, err := Render(Options{Config: cfg}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// Only the "95%" substring must wrap in the threshold FG, closing
+	// back to the static FG so the surrounding tokens stay neutral.
+	if !strings.Contains(got, "\x1b[38;5;160m95%\x1b[38;5;245m") {
+		t.Errorf("expected inner pct wrap '95%%' in fg 160 closing to fg 245, got %q", got)
+	}
+	// The bar must NOT start in the threshold FG.
+	if strings.Contains(got, "\x1b[38;5;160m[") {
+		t.Errorf("threshold FG should not wrap the bar in pct-target mode, got %q", got)
+	}
+}
+
+func TestRender_AllTargetStillWorksAsBefore(t *testing.T) {
+	// With ThresholdTarget omitted (default "all"), the 0.1.10
+	// behaviour holds — the outer style() call wraps the whole
+	// segment in the threshold FG, including the bar and tokens.
+	cfg := Config{Rows: [][]Segment{{
+		{
+			Type:  "context",
+			Style: "bar+pct",
+			FG:    "245",
+			Thresholds: []Threshold{
+				{Min: 90, FG: "160"},
+			},
+		},
+	}}}
+	raw := []byte(`{"context_window":{"used_percentage":95,"context_window_size":1000000,"total_input_tokens":950000}}`)
+	got, err := Render(Options{Config: cfg}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// The whole segment must be wrapped in the threshold FG, so the
+	// bar's opening bracket appears immediately after the opening
+	// escape.
+	if !strings.Contains(got, "\x1b[38;5;160m[") {
+		t.Errorf("all-target should wrap the whole segment including the bar, got %q", got)
+	}
+	// The static FG (245) must not appear — chooseFG overrode it.
+	if strings.Contains(got, "\x1b[38;5;245m") {
+		t.Errorf("static fg 245 should be overridden by the threshold, got %q", got)
+	}
+}
+
+func TestRender_Limit5hPctTargetColorsOnlyDigits(t *testing.T) {
+	// Pin the clock so the countdown is deterministic.
+	const fixedNow = int64(1_000_000_000)
+	prev := nowFunc
+	nowFunc = func() time.Time { return time.Unix(fixedNow, 0) }
+	defer func() { nowFunc = prev }()
+
+	cfg := Config{Rows: [][]Segment{{
+		{
+			Type:            "limit_5h",
+			FG:              "245",
+			ThresholdTarget: "pct",
+			Thresholds: []Threshold{
+				{Min: 90, FG: "160"},
+			},
+		},
+	}}}
+	raw := []byte(`{"rate_limits":{"five_hour":{"used_percentage":95,"resets_at":1000000300}}}`)
+	got, err := Render(Options{Config: cfg}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// "95%" must be wrapped in the threshold FG, closing back to the static FG.
+	if !strings.Contains(got, "\x1b[38;5;160m95%\x1b[38;5;245m") {
+		t.Errorf("expected inner pct wrap '95%%' in fg 160 closing to fg 245, got %q", got)
+	}
+	// The "5h:" label must not start in the threshold FG.
+	if strings.Contains(got, "\x1b[38;5;160m5h:") {
+		t.Errorf("threshold FG should not wrap the label in pct-target mode, got %q", got)
+	}
+	// The countdown "(5m)" must not appear with the threshold FG.
+	if strings.Contains(got, "\x1b[38;5;160m(") {
+		t.Errorf("threshold FG should not wrap the countdown in pct-target mode, got %q", got)
+	}
+}

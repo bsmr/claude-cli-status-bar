@@ -36,6 +36,14 @@ type Segment struct {
 	// highest matching Min wins; thresholds with empty FG are skipped;
 	// segments without a percentage metric ignore the field.
 	Thresholds []Threshold `json:"thresholds,omitempty"`
+
+	// ThresholdTarget selects which part of the segment is colored when
+	// a threshold matches. "" or "all" (default) wraps the whole
+	// segment via the renderer's outer style() call. "pct" causes the
+	// segment to color only the percentage digits internally, leaving
+	// bar cells, tokens, and labels in the segment's static FG.
+	// Unknown values fall back to "all".
+	ThresholdTarget string `json:"threshold_target,omitempty"`
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage
@@ -191,10 +199,12 @@ type renderEnv struct {
 
 // renderSegment dispatches one segment via the registry. Unknown types
 // render "?<type>?" so typos are visible without breaking the row. The
-// effective FG comes from chooseFG so Segment.Thresholds can override
-// the static FG based on the segment's percentage metric. Segments
-// whose body is empty short-circuit to "" so they neither contribute
-// to the row nor emit styling escapes for an invisible payload.
+// effective outer FG comes from chooseFG (threshold override) unless
+// ThresholdTarget=="pct", in which case the segment self-styles its
+// percentage substring internally and the outer wrap uses the static
+// FG so non-pct regions stay neutral. Segments whose body is empty
+// short-circuit to "" so they neither contribute to the row nor emit
+// styling escapes for an invisible payload.
 func renderSegment(p *payload, s Segment, env renderEnv) string {
 	fn, ok := segmentFuncs[s.Type]
 	if !ok {
@@ -204,7 +214,15 @@ func renderSegment(p *payload, s Segment, env renderEnv) string {
 	if out == "" {
 		return ""
 	}
-	return style(out, chooseFG(s, p), s.BG, s.Bold, env.colorEnabled)
+	// For ThresholdTarget == "pct", the segment function has already
+	// colored its percentage substring internally; the outer wrap
+	// must therefore use the static FG so non-pct regions render in
+	// the segment's neutral color, not in the threshold override.
+	fg := s.FG
+	if s.ThresholdTarget != "pct" {
+		fg = chooseFG(s, p)
+	}
+	return style(out, fg, s.BG, s.Bold, env.colorEnabled)
 }
 
 // chooseFG picks the foreground color for a segment, honouring
@@ -255,6 +273,35 @@ func segmentMetric(typ string, p *payload) (float64, bool) {
 		return p.Limits.SevenDay.UsedPercentage, true
 	}
 	return 0, false
+}
+
+// wrapPct conditionally wraps pctText in the threshold-chosen
+// foreground when Segment.ThresholdTarget == "pct" and a threshold
+// matches. The wrap closes back to the segment's static FG (or to
+// "\x1b[39m" terminal-default if the segment has no static FG) so
+// segment text outside the wrap continues in the surrounding color.
+//
+// Returns pctText unchanged when ThresholdTarget is anything other
+// than "pct", when color is disabled, when no threshold matches, when
+// the threshold FG equals the segment's static FG, or when fg256
+// rejects the threshold FG value.
+func wrapPct(pctText string, s Segment, p *payload, colorEnabled bool) string {
+	if !colorEnabled || s.ThresholdTarget != "pct" {
+		return pctText
+	}
+	fg := chooseFG(s, p)
+	if fg == "" || fg == s.FG {
+		return pctText
+	}
+	openInner := fg256(fg)
+	if openInner == "" {
+		return pctText
+	}
+	closeInner := "\x1b[39m"
+	if reopen := fg256(s.FG); reopen != "" {
+		closeInner = reopen
+	}
+	return openInner + pctText + closeInner
 }
 
 // lastResort renders a single line from whatever fields we can salvage when
