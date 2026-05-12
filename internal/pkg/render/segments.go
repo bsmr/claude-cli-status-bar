@@ -7,9 +7,12 @@ import (
 	"strings"
 )
 
-// segmentFunc renders one segment. It MUST return "" to suppress the segment
-// (the row joiner skips empty results), and MUST NOT return ANSI escape
-// codes — colour wrapping happens in renderSegment via style().
+// segmentFunc renders one segment. It MUST return "" to suppress the
+// segment (the row joiner skips empty results). It MAY emit ANSI
+// escape sequences for sub-region styling (e.g. threshold coloring
+// of a percentage substring via wrapPct); when it does, it MUST
+// close every opened sequence before returning so the renderer's
+// outer style() wrap is not broken.
 type segmentFunc func(p *payload, s Segment, env renderEnv) string
 
 // segmentFuncs is the type registry. The bare `text` segment lives here as
@@ -148,8 +151,10 @@ const barCells = 16
 // renderContext draws the context-window state. Style "bar+pct" (default)
 // emits the unicode block bar, the rounded percent, and used/total token
 // counts. "bar" or "pct" omit the other parts. Hidden when both
-// UsedPercentage and ContextWindowSize are zero (no data).
-func renderContext(p *payload, s Segment, _ renderEnv) string {
+// UsedPercentage and ContextWindowSize are zero (no data). When
+// Segment.ThresholdTarget=="pct" the percent digits are wrapped in the
+// threshold FG via wrapPct so the bar and tokens stay in the static FG.
+func renderContext(p *payload, s Segment, env renderEnv) string {
 	if p.Context.UsedPercentage == 0 && p.Context.ContextWindowSize == 0 {
 		return ""
 	}
@@ -158,20 +163,22 @@ func renderContext(p *payload, s Segment, _ renderEnv) string {
 		style = "bar+pct"
 	}
 	pct := int(p.Context.UsedPercentage + 0.5) // round
+	pctText := fmt.Sprintf("%d%%", pct)
+	pctStyled := wrapPct(pctText, s, p, env.colorEnabled)
 	bar := makeBar(p.Context.UsedPercentage, barCells)
 	switch style {
 	case "bar":
 		return bar
 	case "pct":
-		return fmt.Sprintf("%d%%", pct)
+		return pctStyled
 	default: // "bar+pct"
 		// Use total_input_tokens for the visible "consumed" number — that's
 		// the cumulative session input that actually drives the percentage.
 		// current_usage.input_tokens is just the current turn's prompt size
 		// after caching (often 1) and would render misleadingly as "0".
 		used := p.Context.TotalInputTokens
-		return fmt.Sprintf("%s %d%% %s/%s",
-			bar, pct, formatTokens(used), formatTokens(p.Context.ContextWindowSize))
+		return fmt.Sprintf("%s %s %s/%s",
+			bar, pctStyled, formatTokens(used), formatTokens(p.Context.ContextWindowSize))
 	}
 }
 
@@ -211,22 +218,25 @@ func formatTokens(n int64) string {
 // renderLimit5h emits the five-hour rate-limit bucket as
 // "<label>:<pct>% (<countdown>)". Default label "5h".
 func renderLimit5h(p *payload, s Segment, env renderEnv) string {
-	return renderLimit(p.Limits.FiveHour, s, env, "5h")
+	return renderLimit(p.Limits.FiveHour, p, s, env, "5h")
 }
 
 // renderLimit7d emits the seven-day rate-limit bucket. Default label "7d".
 func renderLimit7d(p *payload, s Segment, env renderEnv) string {
-	return renderLimit(p.Limits.SevenDay, s, env, "7d")
+	return renderLimit(p.Limits.SevenDay, p, s, env, "7d")
 }
 
 // renderLimit is the shared body of renderLimit5h and renderLimit7d.
-// Hidden when both UsedPercentage and ResetsAt are zero.
+// Hidden when both UsedPercentage and ResetsAt are zero. When
+// Segment.ThresholdTarget=="pct" the percent digits are wrapped in
+// the threshold FG via wrapPct so the label and countdown stay in
+// the static FG.
 //
 // Style values:
 //   - "" or "pct" (default): "<label>:<pct> (<countdown>)"
 //   - "bar":                 "<label>:[bar]"
 //   - "bar+pct":             "<label>:[bar] <pct> (<countdown>)"
-func renderLimit(rl rateLimitF, s Segment, env renderEnv, defaultLabel string) string {
+func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLabel string) string {
 	if rl.UsedPercentage == 0 && rl.ResetsAt == 0 {
 		return ""
 	}
@@ -234,7 +244,7 @@ func renderLimit(rl rateLimitF, s Segment, env renderEnv, defaultLabel string) s
 	if label == "" {
 		label = defaultLabel
 	}
-	pct := formatPct(rl.UsedPercentage)
+	pct := wrapPct(formatPct(rl.UsedPercentage), s, p, env.colorEnabled)
 
 	switch s.Style {
 	case "bar":

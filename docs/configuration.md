@@ -90,6 +90,7 @@ Per-segment additional fields are documented under each type below.
 | `show_1m_flag`  | `model`                              | Appends `" 1M"` when the payload's `exceeds_200k_tokens` is true. |
 | `style`         | `context`, `limit_5h`, `limit_7d`    | Selects between presentation variants.               |
 | `thresholds`    | `context`, `limit_5h`, `limit_7d`    | Per-segment percentage-driven `fg` overrides. See [Thresholds](#thresholds). |
+| `threshold_target` | `context`, `limit_5h`, `limit_7d` | `"all"` (default) wraps the whole segment in the threshold `fg`; `"pct"` wraps only the percentage digits. See [Thresholds](#thresholds). |
 
 ### Thresholds
 
@@ -118,6 +119,34 @@ overall `fg`, not just the percentage number.
 Threshold ordering inside the array does not matter; the renderer picks
 by `min`, not by position. `bg` and `bold` are not part of the
 threshold schema — pick those statically on the segment.
+
+By default, when a threshold matches, its `fg` is applied to the
+entire segment via the renderer's outer style wrap. That includes
+the bar cells, the percentage digits, the token counts, and the
+label — every glyph in the segment switches color together. For
+narrow displays (single line, modest contrast) this is the desired
+behaviour; for wider layouts the full-segment color shift can
+overwhelm.
+
+The optional `threshold_target` field scopes the override:
+
+- `"all"` (default, omitted): the existing whole-segment behaviour.
+- `"pct"`: only the percentage digits switch to the threshold `fg`.
+  The bar cells, token counts, and label keep the segment's static
+  `fg`.
+
+```json
+{"type": "context", "style": "bar+pct", "fg": "245",
+ "threshold_target": "pct",
+ "thresholds": [
+   {"min": 70, "fg": "136"},
+   {"min": 90, "fg": "160"}
+ ]}
+```
+
+In this configuration the bar `[██░░░░░░░░░░░░░░]` stays in `245`
+(grey) regardless of fill; only the `95%` flicks to `160` (red)
+above the 90 threshold.
 
 ### Segment reference
 
@@ -226,7 +255,9 @@ prompt size after caching).
 
 Token counts are compacted: `1234` → `"1k"`, `1_500_000` → `"1.5M"`. Hidden
 when both `used_percentage` and `context_window_size` are zero. Supports
-[`thresholds`](#thresholds) to switch `fg` based on `used_percentage`.
+[`thresholds`](#thresholds) (whole-segment or `threshold_target: "pct"`
+for just the percentage digits) to switch `fg` based on
+`used_percentage`.
 
 ```json
 {"type": "context", "style": "bar+pct"}
@@ -250,7 +281,9 @@ two adjacent units (`"4d1h"`, `"2h15m"`, `"45m"`). Reaches `"now"` once the
 reset time has passed. Percentages with fractional parts < 0.0005 render
 as integers (`"100%"` not `"100.0%"`). Hidden when both `used_percentage`
 and `resets_at` are zero (no data). Both segments support
-[`thresholds`](#thresholds) to switch `fg` based on `used_percentage`.
+[`thresholds`](#thresholds) (whole-segment or `threshold_target: "pct"`
+for just the percentage digits) to switch `fg` based on
+`used_percentage`.
 
 ```json
 {"type": "limit_5h"}
