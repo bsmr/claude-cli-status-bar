@@ -59,7 +59,7 @@ func renderModel(p *payload, s Segment, _ renderEnv) string {
 	return name
 }
 
-// renderEffort returns "<label>:<level>" when effort.level is non-empty.
+// renderEffort returns "<label>: <level>" when effort.level is non-empty.
 // Default label is "effort"; override via Segment.Label.
 func renderEffort(p *payload, s Segment, _ renderEnv) string {
 	if p.Effort.Level == "" {
@@ -69,7 +69,7 @@ func renderEffort(p *payload, s Segment, _ renderEnv) string {
 	if label == "" {
 		label = "effort"
 	}
-	return label + ":" + p.Effort.Level
+	return label + ": " + p.Effort.Level
 }
 
 // renderSessionName returns session_name verbatim.
@@ -77,7 +77,7 @@ func renderSessionName(p *payload, _ Segment, _ renderEnv) string {
 	return p.SessionName
 }
 
-// renderOutputStyle returns "<label>:<name>" when output_style.name is
+// renderOutputStyle returns "<label>: <name>" when output_style.name is
 // non-empty. Default label is "style".
 func renderOutputStyle(p *payload, s Segment, _ renderEnv) string {
 	if p.OutputStyle.Name == "" {
@@ -87,7 +87,7 @@ func renderOutputStyle(p *payload, s Segment, _ renderEnv) string {
 	if label == "" {
 		label = "style"
 	}
-	return label + ":" + p.OutputStyle.Name
+	return label + ": " + p.OutputStyle.Name
 }
 
 // renderCwd returns the basename of workspace.current_dir by default.
@@ -216,7 +216,7 @@ func formatTokens(n int64) string {
 }
 
 // renderLimit5h emits the five-hour rate-limit bucket as
-// "<label>:<pct>% (<countdown>)". Default label "5h".
+// "<label>: <pct>% (<countdown>)". Default label "5h".
 func renderLimit5h(p *payload, s Segment, env renderEnv) string {
 	return renderLimit(p.Limits.FiveHour, p, s, env, "5h")
 }
@@ -233,9 +233,9 @@ func renderLimit7d(p *payload, s Segment, env renderEnv) string {
 // the static FG.
 //
 // Style values:
-//   - "" or "pct" (default): "<label>:<pct> (<countdown>)"
-//   - "bar":                 "<label>:[bar]"
-//   - "bar+pct":             "<label>:[bar] <pct> (<countdown>)"
+//   - "" or "pct" (default): "<label>: <pct> (<countdown>)"
+//   - "bar":                 "<label>: [bar]"
+//   - "bar+pct":             "<label>: [bar] <pct> (<countdown>)"
 func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLabel string) string {
 	if rl.UsedPercentage == 0 && rl.ResetsAt == 0 {
 		return ""
@@ -248,17 +248,17 @@ func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLab
 
 	switch s.Style {
 	case "bar":
-		return fmt.Sprintf("%s:%s", label, makeBar(rl.UsedPercentage, barCells))
+		return fmt.Sprintf("%s: %s", label, makeBar(rl.UsedPercentage, barCells))
 	case "bar+pct":
 		if rl.ResetsAt == 0 {
-			return fmt.Sprintf("%s:%s %s", label, makeBar(rl.UsedPercentage, barCells), pct)
+			return fmt.Sprintf("%s: %s %s", label, makeBar(rl.UsedPercentage, barCells), pct)
 		}
-		return fmt.Sprintf("%s:%s %s (%s)", label, makeBar(rl.UsedPercentage, barCells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return fmt.Sprintf("%s: %s %s (%s)", label, makeBar(rl.UsedPercentage, barCells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
 	default: // "" or "pct"
 		if rl.ResetsAt == 0 {
-			return fmt.Sprintf("%s:%s", label, pct)
+			return fmt.Sprintf("%s: %s", label, pct)
 		}
-		return fmt.Sprintf("%s:%s (%s)", label, pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return fmt.Sprintf("%s: %s (%s)", label, pct, formatCountdown(rl.ResetsAt-env.nowUnix))
 	}
 }
 
@@ -316,7 +316,7 @@ func renderMode(p *payload, _ Segment, _ renderEnv) string {
 }
 
 // renderGitBranch reads the branch name from env.cwd/.git/HEAD. With a
-// non-empty Segment.Label, the result is prefixed as "<label>:<branch>".
+// non-empty Segment.Label, the result is prefixed as "<label>: <branch>".
 // Returns "" when not in a git repo, detached HEAD, or env.cwd is empty.
 func renderGitBranch(_ *payload, s Segment, env renderEnv) string {
 	b := branch(env.cwd)
@@ -326,5 +326,5 @@ func renderGitBranch(_ *payload, s Segment, env renderEnv) string {
 	if s.Label == "" {
 		return b
 	}
-	return s.Label + ":" + b
+	return s.Label + ": " + b
 }

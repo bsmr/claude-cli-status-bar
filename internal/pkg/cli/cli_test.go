@@ -433,7 +433,7 @@ func TestRun_PassesNoColorThroughToStatusline(t *testing.T) {
 	e := newEnv(t)
 	e.saveConfig(t, config.Config{
 		Render: render.Config{
-			Rows: [][]render.Segment{{{Type: "model", FG: "131"}}},
+			Rows: []render.Row{{Segments: []render.Segment{{Type: "model", FG: "131"}}}},
 		},
 	})
 	body := `{"model":{"display_name":"Opus"}}`

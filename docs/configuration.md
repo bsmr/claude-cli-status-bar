@@ -40,6 +40,7 @@ renderer with the default layout.
 | ----------- | --------------- | ------------- | ----------------------------------------------------------- |
 | `rows`      | array of arrays | default rows  | Each inner array is one output line. Segments in a row are joined with `separator`. |
 | `separator` | string          | `" \| "`      | Joiner between segments in the same row.                    |
+| `powerline` | bool            | `false`       | When true, each row's `bg` fills the terminal width and segments are joined with the U+E0B1 thin chevron. See [Powerline](#powerline). |
 
 When `rows` is omitted or empty, the renderer uses the built-in default:
 
@@ -55,12 +56,87 @@ A row whose segments all render to empty strings is omitted from the output;
 the next row moves up. Empty segments inside a row are dropped before
 joining, so adjacent separators are never doubled.
 
+### Row shape
+
+Each entry in `rows` is either:
+
+- **Legacy array form** (0.1.x compatibility) — a bare array of
+  segments. The row has no background and is rendered with the
+  configured `separator`:
+
+  ```json
+  [{"type": "model"}, {"type": "context", "style": "bar+pct"}]
+  ```
+
+- **Object form** (0.2.0 native) — `{"segments": [...], "bg": "234"}`.
+  The `bg` field is meaningful only when `powerline` is true; it
+  fills the row from column 0 to the terminal's right edge in
+  Powerline mode and is ignored otherwise.
+
+Both shapes can be mixed within the same `rows` array. `ccsb`
+writes back the object form whenever it persists the config (e.g.,
+on `ccsb install` or `ccsb mode`), so a legacy config is migrated
+automatically the next time ccsb modifies the file.
+
 ### Last-resort fallback
 
 If the JSON payload from Claude Code is unparsable, ccsb emits a single
 `<model> · <cwd>` line (or just one of the two, or the literal
 `claude-cli-status-bar`) so the status bar is never blank. Configuration
 does not affect this path.
+
+### Powerline
+
+With `powerline: true`, the renderer switches to a Powerline-style
+row layout:
+
+- Each `Row.Bg` is opened at the start of the row and fills the
+  line all the way to the terminal's right edge (detected via
+  `/dev/tty + ioctl(TIOCGWINSZ)`; falls back to natural width when
+  no controlling tty is available).
+- Segments are joined with the U+E0B1 thin chevron in a muted-grey
+  foreground (`245`). The chevron has no background of its own, so
+  the row's background shows through.
+- Per-segment `fg` / `bg` / `bold` continue to apply *inside* the
+  row-bg. A segment with its own `bg` overrides the row-bg for
+  that segment's text.
+- Empty segments (e.g. `mode` when neither thinking nor fast_mode
+  is set) are dropped together with the surrounding chevron, so
+  the chain stays seamless.
+- With `NO_COLOR`, Powerline degrades to the natural-separator
+  path: no bg, no chevron, segments joined with the configured
+  `separator`. The output is identical to a plain 0.1.x render.
+
+Example two-row config with a two-tone palette:
+
+```json
+{
+  "render": {
+    "powerline": true,
+    "rows": [
+      {"bg": "234", "segments": [
+        {"type": "model", "fg": "33", "bold": true, "show_1m_flag": true},
+        {"type": "mode"},
+        {"type": "context", "style": "bar+pct", "fg": "245",
+         "threshold_target": "pct",
+         "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
+        {"type": "limit_5h", "fg": "245", "threshold_target": "pct",
+         "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
+        {"type": "limit_7d", "fg": "245", "threshold_target": "pct",
+         "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]}
+      ]},
+      {"bg": "237", "segments": [
+        {"type": "git_branch", "fg": "33"},
+        {"type": "lines", "fg": "245"},
+        {"type": "cwd", "fg": "245"}
+      ]}
+    ]
+  }
+}
+```
+
+The chevron glyph and its foreground are hardcoded in 0.2.0; future
+releases may expose them as config knobs.
 
 ## Segments
 
@@ -176,8 +252,8 @@ Returns `<label>:<level>` from `payload.effort.level`. Default label is
 `"effort"`. Hidden when level is empty.
 
 ```json
-{"type": "effort"}                     // "effort:xhigh"
-{"type": "effort", "label": "eff"}     // "eff:xhigh"
+{"type": "effort"}                     // "effort: xhigh"
+{"type": "effort", "label": "eff"}     // "eff: xhigh"
 ```
 
 #### `session_name`
@@ -194,7 +270,7 @@ Returns `<label>:<name>` from `payload.output_style.name`. Default label is
 `"style"`. Hidden when name is empty.
 
 ```json
-{"type": "output_style"}               // "style:concise"
+{"type": "output_style"}               // "style: concise"
 ```
 
 #### `cwd`
@@ -272,9 +348,9 @@ clock at the time of the call.
 
 | `style`     | Output                                         |
 | ----------- | ---------------------------------------------- |
-| `""` / `"pct"` | `5h:18% (2h15m)` (default)                  |
-| `"bar"`     | `5h:[███░░░░░░░░░░░░░]`                        |
-| `"bar+pct"` | `5h:[███░░░░░░░░░░░░░] 18% (2h15m)`            |
+| `""` / `"pct"` | `5h: 18% (2h15m)` (default)                 |
+| `"bar"`     | `5h: [███░░░░░░░░░░░░░]`                        |
+| `"bar+pct"` | `5h: [███░░░░░░░░░░░░░] 18% (2h15m)`            |
 
 Countdown format mirrors `duration`: drop zero higher units, keep at most
 two adjacent units (`"4d1h"`, `"2h15m"`, `"45m"`). Reaches `"now"` once the
@@ -320,7 +396,7 @@ or empty cwd.
 
 ```json
 {"type": "git_branch"}                 // "main"
-{"type": "git_branch", "label": "git"} // "git:main"
+{"type": "git_branch", "label": "git"} // "git: main"
 ```
 
 ## Colors
@@ -362,7 +438,7 @@ Output:
 
 ```
 Opus 4.7 1M | [████░░░░░░░░░░░░] 26% 264k/1M
-$26.05 | 5h:18% (2h15m) | 7d:65% (4d1h)
+$26.05 | 5h: 18% (2h15m) | 7d: 65% (4d1h)
 main | claude-cli-status-bar
 ```
 

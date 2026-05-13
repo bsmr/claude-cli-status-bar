@@ -148,9 +148,9 @@ func TestSaveLoadRoundtrip_PreservesRenderConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	in := config.Config{
 		Render: render.Config{
-			Rows: [][]render.Segment{
-				{{Type: "model", Show1MFlag: true}, {Type: "cost"}},
-				{{Type: "git_branch"}},
+			Rows: []render.Row{
+				{Segments: []render.Segment{{Type: "model", Show1MFlag: true}, {Type: "cost"}}},
+				{Segments: []render.Segment{{Type: "git_branch"}}},
 			},
 			Separator: " · ",
 		},
