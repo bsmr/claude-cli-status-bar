@@ -85,7 +85,7 @@ func TestRun_FallbackWritesExactlyOneLine(t *testing.T) {
 	in := strings.NewReader(`{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`)
 	var out, errOut bytes.Buffer
 
-	cfg := render.Config{Rows: [][]render.Segment{{{Type: "model"}}}}
+	cfg := render.Config{Rows: []render.Row{{Segments: []render.Segment{{Type: "model"}}}}}
 	if err := statusline.Run(ctx, statusline.Options{Render: cfg, NoColor: true}, in, &out, &errOut); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestRun_NativeRenderWhenNoProxy(t *testing.T) {
 	ctx := context.Background()
 	body := `{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`
 	cfg := render.Config{
-		Rows: [][]render.Segment{{{Type: "model"}, {Type: "cwd"}}},
+		Rows: []render.Row{{Segments: []render.Segment{{Type: "model"}, {Type: "cwd"}}}},
 	}
 	var out, errOut bytes.Buffer
 	err := statusline.Run(ctx, statusline.Options{Render: cfg, NoColor: true}, strings.NewReader(body), &out, &errOut)
@@ -424,7 +424,7 @@ func TestRun_NoColorIsRespected(t *testing.T) {
 	ctx := context.Background()
 	body := `{"model":{"display_name":"Opus"}}`
 	cfg := render.Config{
-		Rows: [][]render.Segment{{{Type: "model", FG: "131"}}},
+		Rows: []render.Row{{Segments: []render.Segment{{Type: "model", FG: "131"}}}},
 	}
 	var out bytes.Buffer
 	err := statusline.Run(ctx, statusline.Options{Render: cfg, NoColor: true},

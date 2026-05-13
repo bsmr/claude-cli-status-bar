@@ -6,15 +6,68 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // Config is the on-disk render schema, embedded into config.Config.
 type Config struct {
-	Rows      [][]Segment `json:"rows,omitzero"`
-	Separator string      `json:"separator,omitempty"`
+	Rows      []Row  `json:"rows,omitzero"`
+	Separator string `json:"separator,omitempty"`
+	Powerline bool   `json:"powerline,omitempty"`
+}
+
+// Row is one output line. Powerline mode reads Bg to colour-fill the
+// row from column 0 to the terminal's right edge; without Powerline
+// or with an empty Bg, the row renders as a plain join of its
+// segments.
+type Row struct {
+	Segments []Segment `json:"segments"`
+	Bg       string    `json:"bg,omitempty"`
+}
+
+// UnmarshalJSON accepts two shapes:
+//   - The legacy 0.1.x bare array of segments: [{...},{...}]
+//     → unmarshals into Row{Segments: ..., Bg: ""}.
+//   - The 0.2.0 native object form: {"segments":[...], "bg":"234"}.
+//
+// Detection is by the first non-whitespace byte: '[' for array, '{' for
+// object. All other tokens (null, numbers, strings, booleans) are
+// rejected with an explicit error.
+func (r *Row) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimLeft(data, " \t\r\n")
+	if len(trimmed) == 0 {
+		return errors.New("render.Row: empty value")
+	}
+	if trimmed[0] == '[' {
+		var segs []Segment
+		if err := json.Unmarshal(trimmed, &segs); err != nil {
+			return err
+		}
+		r.Segments = segs
+		r.Bg = ""
+		return nil
+	}
+	// Only '{' is a valid object start; anything else (null, number,
+	// string, boolean) is rejected.
+	if trimmed[0] != '{' {
+		return fmt.Errorf("render.Row: unexpected JSON token %q", string(trimmed[:1]))
+	}
+	// Object shape — use an alias to bypass this UnmarshalJSON method.
+	type rowAlias Row
+	var a rowAlias
+	if err := json.Unmarshal(trimmed, &a); err != nil {
+		return err
+	}
+	*r = Row(a)
+	return nil
 }
 
 // Segment is one element in a row. Type drives dispatch; the remaining
@@ -134,13 +187,32 @@ type thinkF struct {
 var nowFunc = time.Now
 
 // defaultRows is used when Config.Rows is empty.
-var defaultRows = [][]Segment{
-	{{Type: "model", Show1MFlag: true}, {Type: "context", Style: "bar+pct"}},
-	{{Type: "cost"}, {Type: "limit_5h"}, {Type: "limit_7d"}},
-	{{Type: "git_branch"}, {Type: "cwd"}},
+var defaultRows = []Row{
+	{Segments: []Segment{{Type: "model", Show1MFlag: true}, {Type: "context", Style: "bar+pct"}}},
+	{Segments: []Segment{{Type: "cost"}, {Type: "limit_5h"}, {Type: "limit_7d"}}},
+	{Segments: []Segment{{Type: "git_branch"}, {Type: "cwd"}}},
 }
 
 const defaultSeparator = " | "
+
+const (
+	powerlineChevron      = ""
+	powerlineChevronWidth = 1
+	powerlineChevronFG    = "245"
+)
+
+// ansiRegexp matches ANSI SGR escape sequences so displayWidth can
+// strip them before counting visible columns.
+var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// displayWidth returns the visible column count of s after stripping
+// ANSI escape sequences. Uses go-runewidth so emoji (width 2), CJK
+// fullwidth (width 2), and zero-width joiners are handled correctly.
+// The Powerline renderer uses this to know where the bg fill ends.
+func displayWidth(s string) int {
+	stripped := ansiRegexp.ReplaceAllString(s, "")
+	return runewidth.StringWidth(stripped)
+}
 
 // Render parses raw, walks Config.Rows, and returns the joined multi-line
 // output. An empty Config.Rows triggers defaultRows. A global JSON-parse
@@ -172,21 +244,41 @@ func Render(opts Options, raw []byte) (string, error) {
 		colorEnabled: !opts.NoColor,
 		nowUnix:      nowFunc().Unix(),
 	}
+	if opts.Config.Powerline && env.colorEnabled {
+		env.ttyCols = ttyColsFunc()
+	}
 
 	var lines []string
 	for _, row := range rows {
-		var parts []string
-		for _, seg := range row {
-			s := renderSegment(&p, seg, env)
-			if s != "" {
-				parts = append(parts, s)
-			}
+		var line string
+		if opts.Config.Powerline && env.colorEnabled {
+			line = renderRowPowerline(&p, row, env)
+		} else {
+			line = renderRowNatural(&p, row, env, sep)
 		}
-		if len(parts) > 0 {
-			lines = append(lines, strings.Join(parts, sep))
+		if line != "" {
+			lines = append(lines, line)
 		}
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// renderRowNatural is the 0.1.x row builder: render each non-empty
+// segment, join them with the configured separator. Returns "" when
+// every segment renders empty so the row joiner skips the row.
+func renderRowNatural(p *payload, row Row, env renderEnv, sep string) string {
+	var parts []string
+	for _, seg := range row.Segments {
+		s := renderSegment(p, seg, env)
+		if s == "" {
+			continue
+		}
+		parts = append(parts, s)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, sep)
 }
 
 // renderEnv carries per-call state from Render to each segment renderer.
@@ -195,6 +287,7 @@ type renderEnv struct {
 	cwd          string // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
 	colorEnabled bool   // false when NoColor was set on Options
 	nowUnix      int64  // wall clock at the start of Render, for time-based segments
+	ttyCols      int    // populated only when Config.Powerline is true and colour is on
 }
 
 // renderSegment dispatches one segment via the registry. Unknown types
@@ -273,6 +366,81 @@ func segmentMetric(typ string, p *payload) (float64, bool) {
 		return p.Limits.SevenDay.UsedPercentage, true
 	}
 	return 0, false
+}
+
+// renderRowPowerline builds one Powerline-styled row: row-bg fill,
+// thin chevrons between non-empty segments, full-width padding when
+// the TTY column count is known.
+//
+// The row-bg must be re-emitted after every segment because each
+// segment's outer style() wrap ends with \x1b[0m, which resets both
+// fg AND bg. Re-emitting bg256(row.Bg) between segments and before
+// the padding step keeps the bar visually continuous.
+func renderRowPowerline(p *payload, row Row, env renderEnv) string {
+	// Powerline emits ANSI unconditionally; callers must only invoke
+	// this when colour is on. The Render dispatch enforces this
+	// guarantee; we double-check here so the function is
+	// self-contained.
+	if !env.colorEnabled {
+		return ""
+	}
+
+	// 1. Render each segment; drop empties.
+	var parts []string
+	for _, seg := range row.Segments {
+		s := renderSegment(p, seg, env)
+		if s == "" {
+			continue
+		}
+		parts = append(parts, s)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+
+	// 2. Build the chevron: muted-grey fg, no bg of its own, closed
+	//    with the default-foreground SGR so the surrounding bg
+	//    continues to show through.
+	chev := powerlineChevron
+	if open := fg256(powerlineChevronFG); open != "" {
+		chev = open + powerlineChevron + "\x1b[39m"
+	}
+
+	// 3. bgOpen is re-emitted after each [0m-terminated segment.
+	var bgOpen string
+	if row.Bg != "" {
+		bgOpen = bg256(row.Bg)
+	}
+
+	// 4. Interleave.
+	var b strings.Builder
+	b.WriteString(bgOpen)
+	for i, part := range parts {
+		if i > 0 {
+			b.WriteString(chev)
+			b.WriteString(bgOpen) // chev was fg-only; ensure bg before next segment
+		}
+		b.WriteString(part)
+		b.WriteString(bgOpen) // segment's [0m killed bg; restore before chev/padding/reset
+	}
+
+	// 5. Pad to terminal width.
+	if env.ttyCols > 0 && row.Bg != "" {
+		used := 0
+		for _, part := range parts {
+			used += displayWidth(part)
+		}
+		used += (len(parts) - 1) * powerlineChevronWidth
+		if remaining := env.ttyCols - used; remaining > 0 {
+			b.WriteString(strings.Repeat(" ", remaining))
+		}
+	}
+
+	// 6. Close.
+	if row.Bg != "" {
+		b.WriteString(reset)
+	}
+	return b.String()
 }
 
 // wrapPct conditionally wraps pctText in the threshold-chosen

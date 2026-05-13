@@ -37,7 +37,7 @@ func TestRenderModel_StripsParentheticalSuffix(t *testing.T) {
 
 func TestRenderEffort_PrefixesWithLabel(t *testing.T) {
 	p := &payload{Effort: effortF{Level: "xhigh"}}
-	if got := renderEffort(p, Segment{}, renderEnv{}); got != "effort:xhigh" {
+	if got := renderEffort(p, Segment{}, renderEnv{}); got != "effort: xhigh" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestRenderEffort_EmptyLevelHidesSegment(t *testing.T) {
 
 func TestRenderEffort_LabelOverride(t *testing.T) {
 	p := &payload{Effort: effortF{Level: "xhigh"}}
-	if got := renderEffort(p, Segment{Label: "E"}, renderEnv{}); got != "E:xhigh" {
+	if got := renderEffort(p, Segment{Label: "E"}, renderEnv{}); got != "E: xhigh" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -64,7 +64,7 @@ func TestRenderSessionName_Plain(t *testing.T) {
 
 func TestRenderOutputStyle_PrefixesWithLabel(t *testing.T) {
 	p := &payload{OutputStyle: outputF{Name: "default"}}
-	if got := renderOutputStyle(p, Segment{}, renderEnv{}); got != "style:default" {
+	if got := renderOutputStyle(p, Segment{}, renderEnv{}); got != "style: default" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -188,8 +188,8 @@ func TestRenderLimit5h_PercentAndCountdown(t *testing.T) {
 
 	env := renderEnv{nowUnix: 1_778_412_000 - (4*3600 + 23*60)}
 	got := renderLimit5h(p, Segment{}, env)
-	if got != "5h:7% (4h23m)" {
-		t.Errorf("got %q, want 5h:7%% (4h23m)", got)
+	if got != "5h: 7% (4h23m)" {
+		t.Errorf("got %q, want 5h: 7%% (4h23m)", got)
 	}
 }
 
@@ -198,8 +198,8 @@ func TestRenderLimit5h_LabelOverride(t *testing.T) {
 	p.Limits.FiveHour.UsedPercentage = 50
 	p.Limits.FiveHour.ResetsAt = 100
 	env := renderEnv{nowUnix: 100 - 60} // 1m
-	if got := renderLimit5h(p, Segment{Label: "WIN"}, env); got != "WIN:50% (1m)" {
-		t.Errorf("got %q, want WIN:50%% (1m)", got)
+	if got := renderLimit5h(p, Segment{Label: "WIN"}, env); got != "WIN: 50% (1m)" {
+		t.Errorf("got %q, want WIN: 50%% (1m)", got)
 	}
 }
 
@@ -214,8 +214,8 @@ func TestRenderLimit7d_DaysAndHours(t *testing.T) {
 	p.Limits.SevenDay.UsedPercentage = 30
 	p.Limits.SevenDay.ResetsAt = 1_000_000
 	env := renderEnv{nowUnix: 1_000_000 - (5*86400 + 2*3600)} // 5d2h
-	if got := renderLimit7d(p, Segment{}, env); got != "7d:30% (5d2h)" {
-		t.Errorf("got %q, want 7d:30%% (5d2h)", got)
+	if got := renderLimit7d(p, Segment{}, env); got != "7d: 30% (5d2h)" {
+		t.Errorf("got %q, want 7d: 30%% (5d2h)", got)
 	}
 }
 
@@ -224,8 +224,8 @@ func TestRenderLimit_NegativeRemainingShowsNow(t *testing.T) {
 	p.Limits.FiveHour.UsedPercentage = 10
 	p.Limits.FiveHour.ResetsAt = 100
 	env := renderEnv{nowUnix: 200} // already past
-	if got := renderLimit5h(p, Segment{}, env); got != "5h:10% (now)" {
-		t.Errorf("got %q, want 5h:10%% (now)", got)
+	if got := renderLimit5h(p, Segment{}, env); got != "5h: 10% (now)" {
+		t.Errorf("got %q, want 5h: 10%% (now)", got)
 	}
 }
 
@@ -235,7 +235,7 @@ func TestRenderLimit5h_BarStyle(t *testing.T) {
 	p.Limits.FiveHour.ResetsAt = 1000
 	env := renderEnv{nowUnix: 500}
 	got := renderLimit5h(p, Segment{Style: "bar"}, env)
-	want := "5h:[████████░░░░░░░░]"
+	want := "5h: [████████░░░░░░░░]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -247,7 +247,7 @@ func TestRenderLimit5h_BarPctStyleIncludesCountdown(t *testing.T) {
 	p.Limits.FiveHour.ResetsAt = 500 + 60
 	env := renderEnv{nowUnix: 500}
 	got := renderLimit5h(p, Segment{Style: "bar+pct"}, env)
-	want := "5h:[████████░░░░░░░░] 50% (1m)"
+	want := "5h: [████████░░░░░░░░] 50% (1m)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -259,7 +259,7 @@ func TestRenderLimit5h_BarPctWithoutResetOmitsCountdown(t *testing.T) {
 	// ResetsAt zero
 	env := renderEnv{nowUnix: 500}
 	got := renderLimit5h(p, Segment{Style: "bar+pct"}, env)
-	want := "5h:[████████░░░░░░░░] 50%"
+	want := "5h: [████████░░░░░░░░] 50%"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -349,7 +349,7 @@ func TestRenderGitBranch_LabelPrefix(t *testing.T) {
 	mustMkdir(t, filepath.Join(dir, ".git"))
 	mustWriteFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
 
-	if got := renderGitBranch(&payload{}, Segment{Label: "git"}, renderEnv{cwd: dir}); got != "git:main" {
+	if got := renderGitBranch(&payload{}, Segment{Label: "git"}, renderEnv{cwd: dir}); got != "git: main" {
 		t.Errorf("got %q", got)
 	}
 }
