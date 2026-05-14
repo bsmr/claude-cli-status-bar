@@ -721,6 +721,40 @@ func TestRenderRowPowerline_NoColorReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestRenderRowPowerline_ChevronHasSpacingAroundIt(t *testing.T) {
+	// Three single-letter segments with no row bg so the only
+	// separators in the visible output are " <chev> ".
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "A"},
+		{Type: "text", Label: "B"},
+		{Type: "text", Label: "C"},
+	}}
+	env := renderEnv{colorEnabled: true, ttyCols: 0}
+	got := renderRowPowerline(&payload{}, row, env)
+	stripped := ansiRegexp.ReplaceAllString(got, "")
+	want := " " + powerlineChevron + " "
+	if n := strings.Count(stripped, want); n != 2 {
+		t.Errorf("expected %q to appear 2 times in stripped output, got %d\nstripped: %q", want, n, stripped)
+	}
+}
+
+func TestRenderRowPowerline_MultiSegmentPaddingHonoursSpacing(t *testing.T) {
+	// Three single-letter segments + row bg + ttyCols=80 means the
+	// visible content before padding is 3 segs + 2 separators of
+	// width 3 ("<sp><chev><sp>") = 9 cols. The pad step must fill the
+	// remaining 71 cols so displayWidth(got) == 80 exactly.
+	row := Row{Bg: "234", Segments: []Segment{
+		{Type: "text", Label: "A"},
+		{Type: "text", Label: "B"},
+		{Type: "text", Label: "C"},
+	}}
+	env := renderEnv{colorEnabled: true, ttyCols: 80}
+	got := renderRowPowerline(&payload{}, row, env)
+	if w := displayWidth(got); w != 80 {
+		t.Errorf("padded width: got %d, want 80\noutput: %q", w, got)
+	}
+}
+
 func TestRender_PowerlineFalseUsesNaturalPath(t *testing.T) {
 	// With Powerline=false, the output must look like 0.1.x — no
 	// row-bg, no chevron, configured separator between segments.
