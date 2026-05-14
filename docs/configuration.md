@@ -95,8 +95,9 @@ row layout:
   `/dev/tty + ioctl(TIOCGWINSZ)`; falls back to natural width when
   no controlling tty is available).
 - Segments are joined with the U+E0B1 thin chevron in a muted-grey
-  foreground (`245`). The chevron has no background of its own, so
-  the row's background shows through.
+  foreground (`245`), with a single space on each side for breathing
+  room. The chevron has no background of its own, so the row's
+  background shows through the spaces and the glyph.
 - Per-segment `fg` / `bg` / `bold` continue to apply *inside* the
   row-bg. A segment with its own `bg` overrides the row-bg for
   that segment's text.

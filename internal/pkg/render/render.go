@@ -198,7 +198,10 @@ const defaultSeparator = " | "
 const (
 	powerlineChevron      = ""
 	powerlineChevronWidth = 1
-	powerlineChevronFG    = "245"
+	// powerlineSeparatorWidth is the per-join layout cost in display
+	// columns: one space, the chevron glyph, one space.
+	powerlineSeparatorWidth = powerlineChevronWidth + 2
+	powerlineChevronFG      = "245"
 )
 
 // ansiRegexp matches ANSI SGR escape sequences so displayWidth can
@@ -412,13 +415,21 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 		bgOpen = bg256(row.Bg)
 	}
 
-	// 4. Interleave.
+	// 4. Interleave with a single space on each side of the chevron
+	//    so the thin glyph has breathing room from the neighbouring
+	//    segment text. The spaces inherit the row bg from the
+	//    previous bgOpen re-emission and the chevron only flips fg,
+	//    so the bg stays continuous across the " <chev> " cell.
 	var b strings.Builder
 	b.WriteString(bgOpen)
 	for i, part := range parts {
 		if i > 0 {
+			b.WriteString(" ")
 			b.WriteString(chev)
-			b.WriteString(bgOpen) // chev was fg-only; ensure bg before next segment
+			b.WriteString(" ")
+			// defensive: bg is unchanged by chev today, re-asserted
+			// here so a future chev that emits [0m stays correct.
+			b.WriteString(bgOpen)
 		}
 		b.WriteString(part)
 		b.WriteString(bgOpen) // segment's [0m killed bg; restore before chev/padding/reset
@@ -430,7 +441,7 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 		for _, part := range parts {
 			used += displayWidth(part)
 		}
-		used += (len(parts) - 1) * powerlineChevronWidth
+		used += (len(parts) - 1) * powerlineSeparatorWidth
 		if remaining := env.ttyCols - used; remaining > 0 {
 			b.WriteString(strings.Repeat(" ", remaining))
 		}
