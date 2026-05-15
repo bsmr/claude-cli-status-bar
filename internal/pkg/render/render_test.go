@@ -846,11 +846,11 @@ func TestRender_PowerlineTwoRowsDifferentBgs(t *testing.T) {
 }
 
 func TestRender_PowerlineTTYColsPropagated(t *testing.T) {
-	// Swap ttyColsFunc to a deterministic fake; verify the resulting
-	// row reaches that exact display width.
-	prev := ttyColsFunc
-	defer func() { ttyColsFunc = prev }()
-	ttyColsFunc = func() int { return 40 }
+	// Swap devTTYWinsizeReader to a deterministic fake; verify the
+	// resulting row reaches that exact display width.
+	prev := devTTYWinsizeReader
+	defer func() { devTTYWinsizeReader = prev }()
+	devTTYWinsizeReader = func() (int, int, bool) { return 40, 24, true }
 
 	cfg := Config{
 		Powerline: true,
@@ -920,5 +920,67 @@ func TestRenderGitBranch_LabelColonSpacing(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "git: ") {
 		t.Errorf("label format: got %q, want prefix %q", got, "git: ")
+	}
+}
+
+func TestRender_PopulatesTTYColsAndRowsViaDiscover(t *testing.T) {
+	// Stub the three reader vars so detection returns a deterministic
+	// (cols, rows). The tty_size segment surfaces those values to the
+	// output so the test can check the integration end-to-end.
+	prevDev, prevStat, prevFD := devTTYWinsizeReader, procStatReader, procFDWinsizeReader
+	defer func() {
+		devTTYWinsizeReader = prevDev
+		procStatReader = prevStat
+		procFDWinsizeReader = prevFD
+	}()
+	devTTYWinsizeReader = func() (int, int, bool) { return 96, 24, true }
+	procStatReader = func(pid int) ([]byte, error) {
+		t.Fatal("procStatReader must not be called when /dev/tty succeeds")
+		return nil, nil
+	}
+	procFDWinsizeReader = func(path string) (int, int, error) {
+		t.Fatal("procFDWinsizeReader must not be called when /dev/tty succeeds")
+		return 0, 0, nil
+	}
+
+	cfg := Config{
+		Rows: []Row{{Segments: []Segment{{Type: "tty_size"}}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(got, "96×24") {
+		t.Errorf("expected output to contain %q, got %q", "96×24", got)
+	}
+}
+
+func TestConfigJSON_WidthRoundTrip(t *testing.T) {
+	// Config.Width must marshal as the "width" JSON key, omitempty
+	// when zero, and unmarshal back to the same int.
+	zero := Config{}
+	out, err := json.Marshal(zero)
+	if err != nil {
+		t.Fatalf("marshal zero: %v", err)
+	}
+	if strings.Contains(string(out), `"width"`) {
+		t.Errorf("zero Config must omit width, got %s", out)
+	}
+
+	set := Config{Width: 200}
+	out, err = json.Marshal(set)
+	if err != nil {
+		t.Fatalf("marshal set: %v", err)
+	}
+	if !strings.Contains(string(out), `"width":200`) {
+		t.Errorf("Config{Width:200} must encode width, got %s", out)
+	}
+
+	var back Config
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Width != 200 {
+		t.Errorf("round-trip width: got %d, want 200", back.Width)
 	}
 }

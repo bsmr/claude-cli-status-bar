@@ -41,6 +41,7 @@ renderer with the default layout.
 | `rows`      | array of arrays | default rows  | Each inner array is one output line. Segments in a row are joined with `separator`. |
 | `separator` | string          | `" \| "`      | Joiner between segments in the same row.                    |
 | `powerline` | bool            | `false`       | When true, each row's `bg` fills the terminal width and segments are joined with the U+E0B1 thin chevron. See [Powerline](#powerline). |
+| `width`     | int             | `0`           | Explicit terminal-cols override. When `> 0`, ccsb skips terminal-size detection and uses this value. Default `0` runs the detection chain (`/dev/tty` ioctl, then `/proc` parent-process walk). |
 
 When `rows` is omitted or empty, the renderer uses the built-in default:
 
@@ -91,9 +92,11 @@ With `powerline: true`, the renderer switches to a Powerline-style
 row layout:
 
 - Each `Row.Bg` is opened at the start of the row and fills the
-  line all the way to the terminal's right edge (detected via
-  `/dev/tty + ioctl(TIOCGWINSZ)`; falls back to natural width when
-  no controlling tty is available).
+  line all the way to the terminal's right edge. The width is taken
+  from `width` if set, otherwise from `/dev/tty + ioctl(TIOCGWINSZ)`,
+  otherwise from a `/proc` parent-process walk. When every source
+  fails, the row falls back to natural width and the bg ends after
+  the last segment.
 - Segments are joined with the U+E0B1 thin chevron in a muted-grey
   foreground (`245`), with a single space on each side for breathing
   room. The chevron has no background of its own, so the row's
@@ -142,7 +145,7 @@ releases may expose them as config knobs.
 ## Segments
 
 Every segment is an object with at least a `type` field. The renderer
-recognises 14 types.
+recognises 15 types.
 
 ### Common fields
 
@@ -398,6 +401,32 @@ or empty cwd.
 ```json
 {"type": "git_branch"}                 // "main"
 {"type": "git_branch", "label": "git"} // "git: main"
+```
+
+#### `tty_size`
+
+Detected terminal columns × rows. Format supports `{cols}` and `{rows}`
+placeholders; the default format is `"{cols}×{rows}"` using the Unicode
+multiplication sign `U+00D7` (not ASCII `x`). Hidden when detection
+fails — both dimensions zero — so the surrounding separator or
+chevron is dropped naturally. With a non-empty `label`, the output is
+prefixed `"<label>: "`.
+
+Detection chain (first non-zero `cols` wins): the `width` config
+field > `/dev/tty` ioctl > `/proc` parent-process walk. When ccsb
+is invoked by Claude Code, `/dev/tty` is unreachable and the `/proc`
+walk supplies the size. When ccsb is invoked directly from a shell,
+`/dev/tty` satisfies the chain on the first try.
+
+When the `width` config field is set, only `cols` is overridden —
+`rows` stays `0` until `/dev/tty` or the `/proc` walk supplies a
+row count. A custom format using `{rows}` therefore renders as
+`"…×0"` while `width` is the active source.
+
+```json
+{"type": "tty_size"}                            // "128×37"
+{"type": "tty_size", "format": "{cols}c"}       // "128c"
+{"type": "tty_size", "label": "term"}           // "term: 128×37"
 ```
 
 ## Colors
