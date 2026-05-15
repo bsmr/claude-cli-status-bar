@@ -1296,14 +1296,71 @@ func TestRenderRowPowerline_ChevronTransitionColors(t *testing.T) {
 			{Type: "text", Label: "B"},
 		},
 	}
-	env := renderEnv{colorEnabled: true}
+	env := renderEnv{colorEnabled: true} // thin glyph default
 	got := renderRowPowerline(&payload{}, row, env)
-	// Chevron fg = prev.bg (234), bg = next.bg (236).
+	// Thin geometry: chev-cell bg = prev.bg (234), fg = next.bg (236).
+	if !strings.Contains(got, "\x1b[38;5;236m") {
+		t.Errorf("thin chevron fg = 236 missing\nfull: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[48;5;234m") {
+		t.Errorf("thin chevron cell bg = 234 missing\nfull: %q", got)
+	}
+}
+
+func TestRenderRowPowerline_SolidChevronTransitionColors(t *testing.T) {
+	row := Row{
+		Palette: []string{"234", "236"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+		},
+	}
+	env := renderEnv{colorEnabled: true, powerlineStyle: powerlineStyleSolid}
+	got := renderRowPowerline(&payload{}, row, env)
+	// Solid geometry: chev-cell bg = next.bg (236), fg = prev.bg (234).
 	if !strings.Contains(got, "\x1b[38;5;234m") {
-		t.Errorf("chevron fg = 234 missing\nfull: %q", got)
+		t.Errorf("solid chevron fg = 234 missing\nfull: %q", got)
 	}
 	if !strings.Contains(got, "\x1b[48;5;236m") {
-		t.Errorf("chevron bg = 236 missing\nfull: %q", got)
+		t.Errorf("solid chevron cell bg = 236 missing\nfull: %q", got)
+	}
+}
+
+func TestRenderRowPowerline_ChevronPreSpaceInPrevBg(t *testing.T) {
+	// Regression guard for the 0.2.3 bug where both surrounding
+	// spaces rendered in next.bg. With the corrected geometry the
+	// pre-chevron space must render in prev.bg (234), not next.bg
+	// (236). Check by stripping ANSI and looking at the byte
+	// sequence immediately following the first segment's body "A":
+	// it must transition through a prev-bg-painted space before the
+	// chev cell sets next.bg.
+	row := Row{
+		Palette: []string{"234", "236"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+		},
+	}
+	env := renderEnv{colorEnabled: true}
+	got := renderRowPowerline(&payload{}, row, env)
+
+	// Find the chevron glyph position in the raw output.
+	chevIdx := strings.Index(got, powerlineThinGlyph)
+	if chevIdx < 0 {
+		t.Fatalf("chevron glyph not in output: %q", got)
+	}
+	// Look backwards from chevIdx for the pre-space. The pre-space
+	// MUST be preceded by bg256(prevBg="234"). If the output
+	// instead contains bg256(nextBg="236") immediately before the
+	// pre-space, the 0.2.3 bug has regressed.
+	before := got[:chevIdx]
+	preSpaceBg234 := "\x1b[48;5;234m \x1b[48;5;234m"
+	preSpaceBg236 := "\x1b[48;5;236m \x1b[48;5;236m"
+	if !strings.Contains(before, preSpaceBg234) {
+		t.Errorf("pre-chevron region must include bg=234 (prev) space, got prefix %q", before)
+	}
+	if strings.Contains(before, preSpaceBg236) {
+		t.Errorf("pre-chevron region must NOT have bg=236 (next) before glyph — regression of 0.2.3 bug; got prefix %q", before)
 	}
 }
 
@@ -1426,4 +1483,238 @@ func TestRenderRowPowerline_UsableWidthShrunkByMargin(t *testing.T) {
 	if w := displayWidth(got); w != 78 {
 		t.Errorf("padded visible width: got %d, want 78 (= 2 margin + (80-4) usable)\noutput: %q", w, got)
 	}
+}
+
+func TestConfigJSON_CapStyleRoundTrip(t *testing.T) {
+	// Empty omits the key.
+	out, err := json.Marshal(Config{})
+	if err != nil {
+		t.Fatalf("marshal zero: %v", err)
+	}
+	if strings.Contains(string(out), `"cap_style"`) {
+		t.Errorf("empty cap_style must be omitted, got %s", out)
+	}
+
+	for _, v := range []string{"round", "square", "slant", "invalid"} {
+		out, err := json.Marshal(Config{CapStyle: v})
+		if err != nil {
+			t.Fatalf("marshal %q: %v", v, err)
+		}
+		want := `"cap_style":"` + v + `"`
+		if !strings.Contains(string(out), want) {
+			t.Errorf("Config{CapStyle:%q} must encode %q, got %s", v, want, out)
+		}
+		var back Config
+		if err := json.Unmarshal(out, &back); err != nil {
+			t.Fatalf("unmarshal %q: %v", v, err)
+		}
+		if back.CapStyle != v {
+			t.Errorf("round-trip %q: got %q", v, back.CapStyle)
+		}
+	}
+}
+
+func TestPickCapGlyphs(t *testing.T) {
+	cases := []struct {
+		in        string
+		wantLeft  string
+		wantRight string
+	}{
+		{"", powerlineLeftCapRound, powerlineRightCapRound},
+		{"round", powerlineLeftCapRound, powerlineRightCapRound},
+		{"square", "", ""}, // sentinel: empty pair means square (no glyph)
+		{"slant", powerlineLeftCapSlant, powerlineRightCapSlant},
+		{"invalid", powerlineLeftCapRound, powerlineRightCapRound}, // fall back to round
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got := pickCapGlyphs(c.in)
+			if got.left != c.wantLeft || got.right != c.wantRight {
+				t.Errorf("pickCapGlyphs(%q): got (%q, %q), want (%q, %q)",
+					c.in, got.left, got.right, c.wantLeft, c.wantRight)
+			}
+		})
+	}
+}
+
+func TestRowJSON_CapsRoundTrip(t *testing.T) {
+	// Default false omits the key.
+	out, err := json.Marshal(Row{Segments: []Segment{{Type: "text", Label: "x"}}})
+	if err != nil {
+		t.Fatalf("marshal default: %v", err)
+	}
+	if strings.Contains(string(out), `"caps"`) {
+		t.Errorf("default caps must be omitted, got %s", out)
+	}
+
+	// True emits and round-trips. Coexists with bg and palette.
+	in := Row{
+		Bg:       "234",
+		Palette:  []string{"234", "236"},
+		Caps:     true,
+		Segments: []Segment{{Type: "text", Label: "a"}},
+	}
+	out, err = json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal full: %v", err)
+	}
+	if !strings.Contains(string(out), `"caps":true`) {
+		t.Errorf("caps:true must encode, got %s", out)
+	}
+	if !strings.Contains(string(out), `"bg":"234"`) {
+		t.Errorf("bg must coexist with caps, got %s", out)
+	}
+	if !strings.Contains(string(out), `"palette":["234","236"]`) {
+		t.Errorf("palette must coexist with caps, got %s", out)
+	}
+
+	var back Row
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !back.Caps {
+		t.Errorf("caps round-trip: got %v, want true", back.Caps)
+	}
+	if back.Bg != "234" || len(back.Palette) != 2 {
+		t.Errorf("bg/palette lost in round-trip: bg=%q palette=%v", back.Bg, back.Palette)
+	}
+}
+
+func TestRenderRowPowerline_NoCapsByDefault(t *testing.T) {
+	row := Row{
+		Palette:  []string{"234", "236"},
+		Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}},
+	}
+	env := renderEnv{colorEnabled: true}
+	got := renderRowPowerline(&payload{}, row, env)
+	// None of the four cap glyphs should appear when row.Caps is false.
+	for _, glyph := range []string{
+		powerlineLeftCapRound, powerlineRightCapRound,
+		powerlineLeftCapSlant, powerlineRightCapSlant,
+	} {
+		if strings.Contains(got, glyph) {
+			t.Errorf("cap glyph %q must not appear when Caps=false, got %q", glyph, got)
+		}
+	}
+}
+
+func TestRenderRowPowerline_RoundCapsEmitGlyphs(t *testing.T) {
+	row := Row{
+		Caps:     true,
+		Palette:  []string{"234", "236"},
+		Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}},
+	}
+	env := renderEnv{colorEnabled: true} // capStyle default → round
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.Contains(got, powerlineLeftCapRound) {
+		t.Errorf("round left cap glyph missing\nfull: %q", got)
+	}
+	if !strings.Contains(got, powerlineRightCapRound) {
+		t.Errorf("round right cap glyph missing\nfull: %q", got)
+	}
+	// Left cap in fg = first.bg = 234.
+	leftCapSeq := "\x1b[38;5;234m" + powerlineLeftCapRound
+	if !strings.Contains(got, leftCapSeq) {
+		t.Errorf("left cap fg=234 not paired with glyph, got %q", got)
+	}
+	// Right cap in fg = last.bg = 236.
+	rightCapSeq := "\x1b[38;5;236m" + powerlineRightCapRound
+	if !strings.Contains(got, rightCapSeq) {
+		t.Errorf("right cap fg=236 not paired with glyph, got %q", got)
+	}
+}
+
+func TestRenderRowPowerline_SlantCapsEmitGlyphs(t *testing.T) {
+	row := Row{
+		Caps:     true,
+		Palette:  []string{"234", "236"},
+		Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}},
+	}
+	env := renderEnv{colorEnabled: true, capStyle: capStyleSlant}
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.Contains(got, powerlineLeftCapSlant) {
+		t.Errorf("slant left cap glyph missing\nfull: %q", got)
+	}
+	if !strings.Contains(got, powerlineRightCapSlant) {
+		t.Errorf("slant right cap glyph missing\nfull: %q", got)
+	}
+	// And the round glyphs must NOT appear.
+	if strings.Contains(got, powerlineLeftCapRound) {
+		t.Errorf("round left cap must not appear when style=slant, got %q", got)
+	}
+	if strings.Contains(got, powerlineRightCapRound) {
+		t.Errorf("round right cap must not appear when style=slant, got %q", got)
+	}
+}
+
+func TestRenderRowPowerline_SquareCapsEmitBgSpaces(t *testing.T) {
+	row := Row{
+		Caps:     true,
+		Palette:  []string{"234", "236"},
+		Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}},
+	}
+	env := renderEnv{colorEnabled: true, capStyle: capStyleSquare}
+	got := renderRowPowerline(&payload{}, row, env)
+	// No cap glyphs at all.
+	for _, glyph := range []string{
+		powerlineLeftCapRound, powerlineRightCapRound,
+		powerlineLeftCapSlant, powerlineRightCapSlant,
+	} {
+		if strings.Contains(got, glyph) {
+			t.Errorf("cap glyph %q must not appear with cap_style=square, got %q", glyph, got)
+		}
+	}
+}
+
+func TestRenderRowPowerline_UnknownCapStyleFallsBackToRound(t *testing.T) {
+	row := Row{
+		Caps:     true,
+		Palette:  []string{"234"},
+		Segments: []Segment{{Type: "text", Label: "A"}},
+	}
+	env := renderEnv{colorEnabled: true, capStyle: "garbage"}
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.Contains(got, powerlineLeftCapRound) {
+		t.Errorf("unknown cap_style must fall back to round left cap, got %q", got)
+	}
+	if !strings.Contains(got, powerlineRightCapRound) {
+		t.Errorf("unknown cap_style must fall back to round right cap, got %q", got)
+	}
+}
+
+func TestRenderRowPowerline_CapsWidthMath(t *testing.T) {
+	// ttyCols=80, margin=2, row.Caps=true → usableCols = 80 - 4 - 2 = 74.
+	// 3 single-col segments (3) + 2 separators of width 3 (6) = 9 used.
+	// Padding fills 74 - 9 = 65 cols.
+	// Total visible width = 2 (margin) + 1 (left cap) + 9 (content) +
+	// 65 (pad) + 1 (right cap) = 78 cols = ttyCols - margin.
+	row := Row{
+		Caps:    true,
+		Palette: []string{"234", "236", "238"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+			{Type: "text", Label: "C"},
+		},
+	}
+	env := renderEnv{colorEnabled: true, ttyCols: 80, margin: 2}
+	got := renderRowPowerline(&payload{}, row, env)
+	if w := displayWidth(got); w != 78 {
+		t.Errorf("padded visible width with caps: got %d, want 78 (= margin(2) + cap(1) + content(9) + pad(65) + cap(1))\noutput: %q", w, got)
+	}
+}
+
+func TestRenderRowPowerline_LeftCapWithoutBgSkipped(t *testing.T) {
+	// row.Caps=true but the first segment's effective bg is empty
+	// — this branch is unreachable through the standard public path
+	// (renderRowPowerline always passes powerlineActive=true to
+	// effectiveSegmentBg, which falls through to defaultPalette).
+	// This test exists only to document the guard and ensure no
+	// panic when the branch is hit through future internal changes.
+	row := Row{
+		Caps:     true,
+		Segments: []Segment{{Type: "text", Label: "A"}},
+	}
+	env := renderEnv{colorEnabled: true}
+	_ = renderRowPowerline(&payload{}, row, env) // does not panic
 }

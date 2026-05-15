@@ -44,6 +44,7 @@ renderer with the default layout.
 | `width`     | int             | `0`           | Explicit terminal-cols override. When `> 0`, ccsb skips terminal-size detection and uses this value. Default `0` runs the detection chain (`/dev/tty` ioctl, then `/proc` parent-process walk). |
 | `margin`    | int             | `2`           | Plain (no-bg) leading spaces per row; usable bg-fill width is shrunk by `2*margin`. Leaves room for Claude Code's built-in statusLine chrome on each side. Set to `0` to disable. Defaults to `2` when omitted; negative values clamp to `0`. |
 | `powerline_style` | string    | `"thin"`      | Chevron glyph in Powerline mode. `"thin"` (default) renders U+E0B1; `"solid"` renders U+E0B0 as a filled wedge. Unknown values silently fall back to `"thin"`. |
+| `cap_style` | string | `"round"` | End-cap glyph style applied when a row's `caps` is true. `"round"` (default) renders U+E0B6 / U+E0B4 half-circles; `"square"` extends the bg with a 1-col plain space on each side; `"slant"` renders U+E0BC / U+E0BA filled triangles. Unknown values fall back to `"round"`. |
 
 When `rows` is omitted or empty, the renderer uses the built-in default:
 
@@ -93,6 +94,16 @@ empty segments (e.g. `mode` when neither thinking nor fast_mode is
 set) do not consume a palette slot. Index N takes
 `palette[N % len(palette)]`.
 
+The object form also accepts an optional boolean `caps` field. When
+`caps: true` and the first or last visible segment has an effective
+bg, a 1-col cap glyph is emitted on the corresponding side. The
+glyph variant is selected globally via [`cap_style`](#fields). Each
+enabled cap consumes 1 column from the row's usable bg-fill width.
+
+```json
+{"caps": true, "palette": ["234", "236", "238"], "segments": [...]}
+```
+
 The effective background of each segment is resolved in priority
 order: explicit `Segment.bg` > `Row.palette` rotation > `Row.bg`
 (uniform fill) > built-in `defaultPalette` of three subtle dark
@@ -118,16 +129,17 @@ row layout:
   otherwise from a `/proc` parent-process walk. When every source
   fails, the row falls back to natural width and the bg ends after
   the last segment.
-- Segments are joined with a Powerline chevron in classic
-  transition colours: the chevron's foreground is the **previous**
-  segment's effective background, its background is the **next**
-  segment's effective background. When both adjacent backgrounds
-  are the same (legacy uniform-bg configs without a palette), the
-  chevron foreground falls back to `245` so it stays visible. The
-  glyph defaults to the U+E0B1 thin chevron and switches to U+E0B0
-  solid wedge when `powerline_style: "solid"` is set in the config.
-  A single space surrounds the glyph on each side; those spaces
-  inherit the next segment's background.
+- Segments are joined with a Powerline chevron whose colours depend
+  on the glyph style. `"solid"` (U+E0B0, filled wedge) renders with
+  fg = previous segment's bg and bg = next segment's bg, so the
+  wedge shape flows the prev colour into the next region. `"thin"`
+  (U+E0B1, line; the default) renders with fg = next bg and
+  bg = prev bg, so the line marks the trailing edge of prev with a
+  hint of next. The space before the chevron renders in the prev
+  segment's bg, the space after in the next segment's bg. When
+  adjacent backgrounds are equal (legacy uniform-bg configs without
+  a palette), the chevron foreground falls back to `245` so the
+  glyph stays visible. Select the glyph style via `powerline_style`.
 - Per-segment `fg` / `bg` / `bold` continue to apply *inside* the
   row-bg. A segment with its own `bg` overrides the row-bg for
   that segment's text.
@@ -213,6 +225,42 @@ ignores when the palette is non-empty.
 
 The chevron glyph is selectable via `powerline_style`; its colours
 are derived from adjacent backgrounds.
+
+#### End caps
+
+Setting `caps: true` on a row adds a 1-col cap glyph to each end
+whose colour matches the first/last visible segment's effective
+background. The visual silhouette of the row gains a rounded,
+squared, or slanted edge depending on the global `cap_style`.
+
+```json
+{
+  "render": {
+    "powerline": true,
+    "cap_style": "round",
+    "rows": [
+      {"caps": true, "palette": ["234", "236", "238"], "segments": [
+        {"type": "model", "fg": "33", "bold": true},
+        {"type": "cwd", "fg": "245"}
+      ]}
+    ]
+  }
+}
+```
+
+Each cap consumes 1 column from the row's usable bg-fill width. The
+three styles:
+
+- `"round"` (default) — U+E0B6 / U+E0B4 half-circles. Filled glyph
+  in the segment's bg colour on the terminal's default bg, producing
+  a rounded edge.
+- `"square"` — no glyph; a 1-col plain bg-painted space on each
+  side. Useful when the patched Powerline font is unavailable. The
+  visual is a flat bg extension without a curved edge.
+- `"slant"` — U+E0BC / U+E0BA filled triangles. Diagonal edge in
+  the segment's bg colour.
+
+Unknown `cap_style` values fall back to `"round"`.
 
 ## Segments
 
