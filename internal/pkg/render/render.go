@@ -30,6 +30,35 @@ type Config struct {
 	// "<width>×0" until either /dev/tty or the /proc walk supplies a
 	// row count.
 	Width int `json:"width,omitempty"`
+	// Margin reserves N columns of plain (non-bg) space at the start
+	// of every row and shrinks the usable bg-fill width by 2*N. The
+	// goal is to leave room for Claude Code's built-in statusLine
+	// chrome on each side so two-row Powerline configurations are not
+	// truncated. Nil defaults to defaultMargin (= 2). Set to 0 to
+	// disable; negative values clamp to 0.
+	Margin *int `json:"margin,omitempty"`
+	// PowerlineStyle selects the chevron glyph between segments when
+	// Powerline is enabled. "" or "thin" (default) renders U+E0B1, the
+	// thin chevron. "solid" renders U+E0B0, the filled wedge. Unknown
+	// values silently fall back to thin so a typo cannot break
+	// rendering.
+	PowerlineStyle string `json:"powerline_style,omitempty"`
+}
+
+// defaultMargin is the implicit Config.Margin when the field is unset.
+const defaultMargin = 2
+
+// effectiveMargin returns the column count to reserve as plain leading
+// space and to subtract twice from the usable bg-fill width. A nil
+// Margin uses defaultMargin; a negative Margin clamps to 0.
+func (c Config) effectiveMargin() int {
+	if c.Margin == nil {
+		return defaultMargin
+	}
+	if *c.Margin < 0 {
+		return 0
+	}
+	return *c.Margin
 }
 
 // Row is one output line. Powerline mode reads Bg to colour-fill the
@@ -39,6 +68,14 @@ type Config struct {
 type Row struct {
 	Segments []Segment `json:"segments"`
 	Bg       string    `json:"bg,omitempty"`
+	// Palette, when non-empty, rotates through these ANSI 256-color
+	// strings across the visible segments of this row. Indexed by
+	// visible-segment rank (empty segments don't claim a palette
+	// slot), modulo len(Palette). Per-segment Segment.BG overrides
+	// the palette at that position. When Palette is empty, the
+	// resolution falls through to Bg (uniform fill) and finally to
+	// the package-level defaultPalette when Powerline is active.
+	Palette []string `json:"palette,omitempty"`
 }
 
 // UnmarshalJSON accepts two shapes:
@@ -204,13 +241,67 @@ var defaultRows = []Row{
 const defaultSeparator = " | "
 
 const (
-	powerlineChevron      = ""
 	powerlineChevronWidth = 1
 	// powerlineSeparatorWidth is the per-join layout cost in display
 	// columns: one space, the chevron glyph, one space.
 	powerlineSeparatorWidth = powerlineChevronWidth + 2
-	powerlineChevronFG      = "245"
+
+	// Style identifiers for Config.PowerlineStyle.
+	powerlineStyleThin  = "thin"
+	powerlineStyleSolid = "solid"
+
+	// Glyphs used by pickGlyph based on the style identifier.
+	powerlineThinGlyph  = "" // U+E0B1 RIGHT TRIANGLE LINE
+	powerlineSolidGlyph = "" // U+E0B0 RIGHT TRIANGLE FILL
+
+	// defaultSameBgChevronFG is the chevron foreground when the two
+	// adjacent segments share the same effective bg (no real
+	// transition). Preserves the 0.2.0 visual for legacy uniform-bg
+	// configs.
+	defaultSameBgChevronFG = "245"
 )
+
+// defaultPalette rotates per visible segment when neither Row.Bg
+// nor Row.Palette is configured and Powerline is enabled. Three
+// subtle dark greys produce a classic alternating-Powerline look
+// out of the box.
+var defaultPalette = []string{"234", "236", "238"}
+
+// pickGlyph maps Config.PowerlineStyle to its chevron glyph.
+// Unknown or empty values yield the thin glyph.
+func pickGlyph(style string) string {
+	if style == powerlineStyleSolid {
+		return powerlineSolidGlyph
+	}
+	return powerlineThinGlyph
+}
+
+// effectiveSegmentBg returns the background colour for a given segment
+// at a given visible-segment position. Priority ladder:
+//
+//  1. Segment.BG (explicit per-segment override)
+//  2. Row.Palette[visibleIndex % len] (per-row rotation)
+//  3. Row.Bg (uniform row fill)
+//  4. defaultPalette[visibleIndex % len] when powerlineActive is true
+//  5. "" (no bg, natural-mode fallback)
+//
+// visibleIndex is the rank of the segment among the row's non-empty
+// segments — empty segments do not claim a palette slot.
+func effectiveSegmentBg(row Row, seg Segment, visibleIndex int, powerlineActive bool) string {
+	if seg.BG != "" {
+		return seg.BG
+	}
+	if n := len(row.Palette); n > 0 {
+		return row.Palette[visibleIndex%n]
+	}
+	if row.Bg != "" {
+		return row.Bg
+	}
+	if powerlineActive {
+		return defaultPalette[visibleIndex%len(defaultPalette)]
+	}
+	return ""
+}
 
 // ansiRegexp matches ANSI SGR escape sequences so displayWidth can
 // strip them before counting visible columns.
@@ -251,11 +342,18 @@ func Render(opts Options, raw []byte) (string, error) {
 	}
 
 	env := renderEnv{
-		cwd:          cwd,
-		colorEnabled: !opts.NoColor,
-		nowUnix:      nowFunc().Unix(),
+		cwd:            cwd,
+		colorEnabled:   !opts.NoColor,
+		nowUnix:        nowFunc().Unix(),
+		powerlineStyle: opts.Config.PowerlineStyle,
 	}
 	env.ttyCols, env.ttyRows = discoverTermSize(opts.Config)
+	env.margin = opts.Config.effectiveMargin()
+	// Degrade gracefully if the terminal is narrower than 2*margin
+	// — keep at least one column of usable bg-fill width.
+	if env.ttyCols > 0 && env.ttyCols <= 2*env.margin {
+		env.margin = 0
+	}
 
 	var lines []string
 	for _, row := range rows {
@@ -273,8 +371,9 @@ func Render(opts Options, raw []byte) (string, error) {
 }
 
 // renderRowNatural is the 0.1.x row builder: render each non-empty
-// segment, join them with the configured separator. Returns "" when
-// every segment renders empty so the row joiner skips the row.
+// segment, join them with the configured separator, then prepend any
+// configured margin. Returns "" when every segment renders empty so
+// the row joiner skips the row.
 func renderRowNatural(p *payload, row Row, env renderEnv, sep string) string {
 	var parts []string
 	for _, seg := range row.Segments {
@@ -287,17 +386,23 @@ func renderRowNatural(p *payload, row Row, env renderEnv, sep string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, sep)
+	joined := strings.Join(parts, sep)
+	if env.margin > 0 {
+		return strings.Repeat(" ", env.margin) + joined
+	}
+	return joined
 }
 
 // renderEnv carries per-call state from Render to each segment renderer.
 // Segment functions read these fields but never mutate them.
 type renderEnv struct {
-	cwd          string // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
-	colorEnabled bool   // false when NoColor was set on Options
-	nowUnix      int64  // wall clock at the start of Render, for time-based segments
-	ttyCols      int    // detected terminal columns, 0 when unknown
-	ttyRows      int    // detected terminal rows, 0 when unknown
+	cwd            string // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
+	colorEnabled   bool   // false when NoColor was set on Options
+	nowUnix        int64  // wall clock at the start of Render, for time-based segments
+	ttyCols        int    // detected terminal columns, 0 when unknown
+	ttyRows        int    // detected terminal rows, 0 when unknown
+	margin         int    // plain leading spaces per row; usable bg-fill width = ttyCols - 2*margin
+	powerlineStyle string // "thin" (default) | "solid"; used by renderRowPowerline via pickGlyph
 }
 
 // renderSegment dispatches one segment via the registry. Unknown types
@@ -378,86 +483,92 @@ func segmentMetric(typ string, p *payload) (float64, bool) {
 	return 0, false
 }
 
-// renderRowPowerline builds one Powerline-styled row: row-bg fill,
-// thin chevrons between non-empty segments, full-width padding when
-// the TTY column count is known.
-//
-// The row-bg must be re-emitted after every segment because each
-// segment's outer style() wrap ends with \x1b[0m, which resets both
-// fg AND bg. Re-emitting bg256(row.Bg) between segments and before
-// the padding step keeps the bar visually continuous.
+// renderRowPowerline builds one Powerline-styled row: each visible
+// segment in its effective bg, joined with chevron transitions
+// coloured to bleed prev.bg onto next.bg, prepended by margin plain
+// spaces, padded to (ttyCols - 2*margin). When colorEnabled is
+// false the function returns "" so the caller falls back to the
+// natural-mode path.
 func renderRowPowerline(p *payload, row Row, env renderEnv) string {
-	// Powerline emits ANSI unconditionally; callers must only invoke
-	// this when colour is on. The Render dispatch enforces this
-	// guarantee; we double-check here so the function is
-	// self-contained.
 	if !env.colorEnabled {
 		return ""
 	}
 
-	// 1. Render each segment; drop empties.
-	var parts []string
+	// 1. Render visible segments and capture each one's effective bg.
+	type renderedSeg struct {
+		body string
+		bg   string
+	}
+	var visible []renderedSeg
 	for _, seg := range row.Segments {
 		s := renderSegment(p, seg, env)
 		if s == "" {
 			continue
 		}
-		parts = append(parts, s)
+		bg := effectiveSegmentBg(row, seg, len(visible), true)
+		visible = append(visible, renderedSeg{body: s, bg: bg})
 	}
-	if len(parts) == 0 {
+	if len(visible) == 0 {
 		return ""
 	}
 
-	// 2. Build the chevron: muted-grey fg, no bg of its own, closed
-	//    with the default-foreground SGR so the surrounding bg
-	//    continues to show through.
-	chev := powerlineChevron
-	if open := fg256(powerlineChevronFG); open != "" {
-		chev = open + powerlineChevron + "\x1b[39m"
-	}
-
-	// 3. bgOpen is re-emitted after each [0m-terminated segment.
-	var bgOpen string
-	if row.Bg != "" {
-		bgOpen = bg256(row.Bg)
-	}
-
-	// 4. Interleave with a single space on each side of the chevron
-	//    so the thin glyph has breathing room from the neighbouring
-	//    segment text. The spaces inherit the row bg from the
-	//    previous bgOpen re-emission and the chevron only flips fg,
-	//    so the bg stays continuous across the " <chev> " cell.
+	glyph := pickGlyph(env.powerlineStyle)
 	var b strings.Builder
-	b.WriteString(bgOpen)
-	for i, part := range parts {
-		if i > 0 {
-			b.WriteString(" ")
-			b.WriteString(chev)
-			b.WriteString(" ")
-			// defensive: bg is unchanged by chev today, re-asserted
-			// here so a future chev that emits [0m stays correct.
-			b.WriteString(bgOpen)
-		}
-		b.WriteString(part)
-		b.WriteString(bgOpen) // segment's [0m killed bg; restore before chev/padding/reset
+
+	// 2. Leading margin: plain spaces with no bg, so Claude Code's
+	//    statusLine chrome shows through.
+	if env.margin > 0 {
+		b.WriteString(strings.Repeat(" ", env.margin))
 	}
 
-	// 5. Pad to terminal width.
-	if env.ttyCols > 0 && row.Bg != "" {
-		used := 0
-		for _, part := range parts {
-			used += displayWidth(part)
+	// 3. Walk segments, interleaving chevrons.
+	for i, seg := range visible {
+		if i == 0 {
+			// First segment: open its bg.
+			if seg.bg != "" {
+				b.WriteString(bg256(seg.bg))
+			}
+		} else {
+			// Chevron transition between visible[i-1] and visible[i].
+			prevBg := visible[i-1].bg
+			nextBg := seg.bg
+			chevFg := prevBg
+			if prevBg == nextBg {
+				chevFg = defaultSameBgChevronFG
+			}
+			// Both spaces around the glyph render in nextBg. The
+			// glyph itself adds chevFg as fg. A full reset closes the
+			// chevron region, then bg256(nextBg) re-asserts bg for the
+			// next segment body.
+			b.WriteString(bg256(nextBg))
+			b.WriteString(" ")
+			b.WriteString(fg256(chevFg))
+			b.WriteString(glyph)
+			b.WriteString(reset)
+			b.WriteString(bg256(nextBg))
+			b.WriteString(" ")
 		}
-		used += (len(parts) - 1) * powerlineSeparatorWidth
-		if remaining := env.ttyCols - used; remaining > 0 {
+		b.WriteString(seg.body)
+		if seg.bg != "" {
+			b.WriteString(bg256(seg.bg)) // segment body's [0m killed bg; restore
+		}
+	}
+
+	// 4. Pad to (ttyCols - 2*margin) total visible cols of bg-fill.
+	if env.ttyCols > 0 {
+		usableCols := env.ttyCols - 2*env.margin
+		used := 0
+		for _, seg := range visible {
+			used += displayWidth(seg.body)
+		}
+		used += (len(visible) - 1) * powerlineSeparatorWidth
+		if remaining := usableCols - used; remaining > 0 {
 			b.WriteString(strings.Repeat(" ", remaining))
 		}
 	}
 
-	// 6. Close.
-	if row.Bg != "" {
-		b.WriteString(reset)
-	}
+	// 5. Close.
+	b.WriteString(reset)
 	return b.String()
 }
 
