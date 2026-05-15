@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -36,6 +37,7 @@ func init() {
 	segmentFuncs["limit_7d"] = renderLimit7d
 	segmentFuncs["mode"] = renderMode
 	segmentFuncs["git_branch"] = renderGitBranch
+	segmentFuncs["tty_size"] = renderTTYSize
 }
 
 // renderText returns the segment's Label verbatim. Useful as a literal
@@ -327,4 +329,26 @@ func renderGitBranch(_ *payload, s Segment, env renderEnv) string {
 		return b
 	}
 	return s.Label + ": " + b
+}
+
+// renderTTYSize formats env.ttyCols × env.ttyRows. Returns "" when
+// detection failed (both dimensions 0), so the empty-segment-drop path
+// in both renderers omits the segment plus its surrounding separator
+// or chevron. s.Format supports the placeholders {cols} and {rows};
+// the default format is "{cols}×{rows}" using U+00D7 (multiplication
+// sign), not ASCII 'x'. s.Label, when set, prefixes "<label>: ".
+func renderTTYSize(_ *payload, s Segment, env renderEnv) string {
+	if env.ttyCols == 0 && env.ttyRows == 0 {
+		return ""
+	}
+	format := s.Format
+	if format == "" {
+		format = "{cols}×{rows}"
+	}
+	out := strings.ReplaceAll(format, "{cols}", strconv.Itoa(env.ttyCols))
+	out = strings.ReplaceAll(out, "{rows}", strconv.Itoa(env.ttyRows))
+	if s.Label != "" {
+		out = s.Label + ": " + out
+	}
+	return out
 }

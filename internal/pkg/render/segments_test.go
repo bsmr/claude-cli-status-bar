@@ -353,3 +353,53 @@ func TestRenderGitBranch_LabelPrefix(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestRenderTTYSize_DefaultFormat(t *testing.T) {
+	env := renderEnv{ttyCols: 128, ttyRows: 37}
+	got := renderTTYSize(&payload{}, Segment{Type: "tty_size"}, env)
+	if got != "128×37" {
+		t.Errorf("got %q, want %q", got, "128×37")
+	}
+}
+
+func TestRenderTTYSize_ColsOnlyFormat(t *testing.T) {
+	env := renderEnv{ttyCols: 128, ttyRows: 37}
+	got := renderTTYSize(&payload{}, Segment{Type: "tty_size", Format: "{cols}c"}, env)
+	if got != "128c" {
+		t.Errorf("got %q, want %q", got, "128c")
+	}
+}
+
+func TestRenderTTYSize_LabelPrefix(t *testing.T) {
+	env := renderEnv{ttyCols: 128, ttyRows: 37}
+	got := renderTTYSize(&payload{}, Segment{Type: "tty_size", Label: "term"}, env)
+	if got != "term: 128×37" {
+		t.Errorf("got %q, want %q", got, "term: 128×37")
+	}
+}
+
+func TestRenderTTYSize_HiddenWhenBothZero(t *testing.T) {
+	env := renderEnv{ttyCols: 0, ttyRows: 0}
+	got := renderTTYSize(&payload{}, Segment{Type: "tty_size"}, env)
+	if got != "" {
+		t.Errorf("got %q, want \"\"", got)
+	}
+}
+
+func TestRenderTTYSize_LabelDoesNotPreventHide(t *testing.T) {
+	env := renderEnv{ttyCols: 0, ttyRows: 0}
+	got := renderTTYSize(&payload{}, Segment{Type: "tty_size", Label: "term"}, env)
+	if got != "" {
+		t.Errorf("got %q, want \"\" (hide must precede label prefix)", got)
+	}
+}
+
+func TestRenderTTYSize_RowsZeroIsNotHidden(t *testing.T) {
+	// Config.Width sets cols only; rows stays 0. The segment must still
+	// render — "size unknown" is the both-zero case, not rows-zero.
+	env := renderEnv{ttyCols: 128, ttyRows: 0}
+	got := renderTTYSize(&payload{}, Segment{Type: "tty_size"}, env)
+	if got != "128×0" {
+		t.Errorf("got %q, want %q", got, "128×0")
+	}
+}

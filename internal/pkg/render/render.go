@@ -22,6 +22,14 @@ type Config struct {
 	Rows      []Row  `json:"rows,omitzero"`
 	Separator string `json:"separator,omitempty"`
 	Powerline bool   `json:"powerline,omitempty"`
+	// Width overrides automatic terminal-width detection when non-zero.
+	// Powerline bg-fill and truncation use this value directly instead
+	// of querying /dev/tty or the /proc parent chain. Rows are not
+	// overridable via this field; discoverTermSize returns rows=0 when
+	// this branch is taken, so a tty_size segment will render as
+	// "<width>×0" until either /dev/tty or the /proc walk supplies a
+	// row count.
+	Width int `json:"width,omitempty"`
 }
 
 // Row is one output line. Powerline mode reads Bg to colour-fill the
@@ -247,9 +255,7 @@ func Render(opts Options, raw []byte) (string, error) {
 		colorEnabled: !opts.NoColor,
 		nowUnix:      nowFunc().Unix(),
 	}
-	if opts.Config.Powerline && env.colorEnabled {
-		env.ttyCols = ttyColsFunc()
-	}
+	env.ttyCols, env.ttyRows = discoverTermSize(opts.Config)
 
 	var lines []string
 	for _, row := range rows {
@@ -290,7 +296,8 @@ type renderEnv struct {
 	cwd          string // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
 	colorEnabled bool   // false when NoColor was set on Options
 	nowUnix      int64  // wall clock at the start of Render, for time-based segments
-	ttyCols      int    // populated only when Config.Powerline is true and colour is on
+	ttyCols      int    // detected terminal columns, 0 when unknown
+	ttyRows      int    // detected terminal rows, 0 when unknown
 }
 
 // renderSegment dispatches one segment via the registry. Unknown types
