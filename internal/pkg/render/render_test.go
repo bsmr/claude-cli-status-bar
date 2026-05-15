@@ -55,6 +55,7 @@ func TestRender_UnknownSegmentTypeRendersMarker(t *testing.T) {
 
 func TestRender_RowsJoinedWithNewline_SegmentsWithSeparator(t *testing.T) {
 	cfg := Config{
+		Margin: intPtr(0),
 		Rows: []Row{
 			{Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}}},
 			{Segments: []Segment{{Type: "text", Label: "C"}}},
@@ -72,7 +73,10 @@ func TestRender_RowsJoinedWithNewline_SegmentsWithSeparator(t *testing.T) {
 }
 
 func TestRender_DefaultSeparator(t *testing.T) {
-	cfg := Config{Rows: []Row{{Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}}}}}
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows:   []Row{{Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}}}},
+	}
 	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
 	if got != "A | B" {
 		t.Errorf("default separator should be ' | ', got %q", got)
@@ -95,7 +99,7 @@ func TestRender_DefaultLayoutAgainstSamplePayload(t *testing.T) {
 			"seven_day":  {"used_percentage": 30,   "resets_at": 700}
 		}
 	}`)
-	got, err := Render(Options{Cwd: "/tmp"}, raw)
+	got, err := Render(Options{Cwd: "/tmp", Config: Config{Margin: intPtr(0)}}, raw)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -305,9 +309,10 @@ func TestRender_StyledEmptySegmentEmitsNothing(t *testing.T) {
 
 func TestRender_StyledNonEmptySegmentStillWraps(t *testing.T) {
 	// Regression: the empty-text early-return must not affect normal segments.
-	cfg := Config{Rows: []Row{{Segments: []Segment{
-		{Type: "text", Label: "hello", FG: "33"},
-	}}}}
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows:   []Row{{Segments: []Segment{{Type: "text", Label: "hello", FG: "33"}}}},
+	}
 	got, err := Render(Options{Config: cfg}, []byte(`{}`))
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -655,7 +660,7 @@ func TestRenderRowPowerline_ChevronBetweenSegments(t *testing.T) {
 	env := renderEnv{colorEnabled: true, ttyCols: 0}
 	got := renderRowPowerline(&payload{}, row, env)
 	// Exactly two chevrons for three segments.
-	if n := strings.Count(got, powerlineChevron); n != 2 {
+	if n := strings.Count(got, powerlineThinGlyph); n != 2 {
 		t.Errorf("chevron count: got %d, want 2 in %q", n, got)
 	}
 	// Chevron carries the muted-grey fg.
@@ -673,7 +678,7 @@ func TestRenderRowPowerline_EmptySegmentDropsChevron(t *testing.T) {
 	}}
 	env := renderEnv{colorEnabled: true, ttyCols: 0}
 	got := renderRowPowerline(&payload{}, row, env)
-	if n := strings.Count(got, powerlineChevron); n != 1 {
+	if n := strings.Count(got, powerlineThinGlyph); n != 1 {
 		t.Errorf("chevron count: got %d, want 1 in %q", n, got)
 	}
 }
@@ -700,13 +705,15 @@ func TestRenderRowPowerline_NoPaddingWhenTTYIsZero(t *testing.T) {
 	}
 }
 
-func TestRenderRowPowerline_NoBgSkipsBgEscape(t *testing.T) {
-	// A row with empty Bg still renders but never emits \x1b[48;...
+func TestRenderRowPowerline_NoBgUsesDefaultPalette(t *testing.T) {
+	// A row with no Bg and no Palette falls back to defaultPalette in
+	// Powerline mode. The first visible segment picks defaultPalette[0]
+	// ("234"), so a bg escape MUST appear.
 	row := Row{Bg: "", Segments: []Segment{{Type: "text", Label: "A"}}}
 	env := renderEnv{colorEnabled: true, ttyCols: 80}
 	got := renderRowPowerline(&payload{}, row, env)
-	if strings.Contains(got, "\x1b[48;") {
-		t.Errorf("empty Bg should not emit bg escape, got %q", got)
+	if !strings.Contains(got, "\x1b[48;5;234m") {
+		t.Errorf("no-Bg row must use defaultPalette[0] = 234, got %q", got)
 	}
 }
 
@@ -732,7 +739,7 @@ func TestRenderRowPowerline_ChevronHasSpacingAroundIt(t *testing.T) {
 	env := renderEnv{colorEnabled: true, ttyCols: 0}
 	got := renderRowPowerline(&payload{}, row, env)
 	stripped := ansiRegexp.ReplaceAllString(got, "")
-	want := " " + powerlineChevron + " "
+	want := " " + powerlineThinGlyph + " "
 	if n := strings.Count(stripped, want); n != 2 {
 		t.Errorf("expected %q to appear 2 times in stripped output, got %d\nstripped: %q", want, n, stripped)
 	}
@@ -776,7 +783,7 @@ func TestRender_PowerlineFalseUsesNaturalPath(t *testing.T) {
 	if strings.Contains(got, "\x1b[48;5;234m") {
 		t.Errorf("natural path must not emit row-bg, got %q", got)
 	}
-	if strings.Contains(got, powerlineChevron) {
+	if strings.Contains(got, powerlineThinGlyph) {
 		t.Errorf("natural path must not emit chevron, got %q", got)
 	}
 }
@@ -796,7 +803,7 @@ func TestRender_PowerlineTrueEmitsBgAndChevron(t *testing.T) {
 	if !strings.Contains(got, "\x1b[48;5;234m") {
 		t.Errorf("Powerline path must emit row-bg, got %q", got)
 	}
-	if !strings.Contains(got, powerlineChevron) {
+	if !strings.Contains(got, powerlineThinGlyph) {
 		t.Errorf("Powerline path must emit chevron, got %q", got)
 	}
 }
@@ -820,7 +827,7 @@ func TestRender_PowerlineNoColorFallsBackToNatural(t *testing.T) {
 	if strings.ContainsRune(got, '\x1b') {
 		t.Errorf("NoColor must emit no ANSI, got %q", got)
 	}
-	if strings.Contains(got, powerlineChevron) {
+	if strings.Contains(got, powerlineThinGlyph) {
 		t.Errorf("NoColor + Powerline must not emit chevron, got %q", got)
 	}
 }
@@ -847,13 +854,15 @@ func TestRender_PowerlineTwoRowsDifferentBgs(t *testing.T) {
 
 func TestRender_PowerlineTTYColsPropagated(t *testing.T) {
 	// Swap devTTYWinsizeReader to a deterministic fake; verify the
-	// resulting row reaches that exact display width.
+	// resulting row reaches exactly ttyCols visible columns when margin
+	// is zero (so bg-fill spans the full width).
 	prev := devTTYWinsizeReader
 	defer func() { devTTYWinsizeReader = prev }()
 	devTTYWinsizeReader = func() (int, int, bool) { return 40, 24, true }
 
 	cfg := Config{
 		Powerline: true,
+		Margin:    intPtr(0), // disable margin so bg-fill == ttyCols
 		Rows:      []Row{{Bg: "234", Segments: []Segment{{Type: "text", Label: "hi"}}}},
 	}
 	got, err := Render(Options{Config: cfg}, []byte(`{}`))
@@ -982,5 +991,439 @@ func TestConfigJSON_WidthRoundTrip(t *testing.T) {
 	}
 	if back.Width != 200 {
 		t.Errorf("round-trip width: got %d, want 200", back.Width)
+	}
+}
+
+func TestConfigJSON_MarginRoundTrip(t *testing.T) {
+	// Nil Margin omits the key.
+	out, err := json.Marshal(Config{})
+	if err != nil {
+		t.Fatalf("marshal zero: %v", err)
+	}
+	if strings.Contains(string(out), `"margin"`) {
+		t.Errorf("nil margin must be omitted, got %s", out)
+	}
+
+	// Explicit zero emits "margin":0.
+	zero := 0
+	out, err = json.Marshal(Config{Margin: &zero})
+	if err != nil {
+		t.Fatalf("marshal zero pointer: %v", err)
+	}
+	if !strings.Contains(string(out), `"margin":0`) {
+		t.Errorf("explicit zero must emit margin:0, got %s", out)
+	}
+
+	// Non-zero value round-trips.
+	five := 5
+	out, err = json.Marshal(Config{Margin: &five})
+	if err != nil {
+		t.Fatalf("marshal five: %v", err)
+	}
+	if !strings.Contains(string(out), `"margin":5`) {
+		t.Errorf("Config{Margin:&5} must encode margin:5, got %s", out)
+	}
+	var back Config
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Margin == nil || *back.Margin != 5 {
+		t.Errorf("round-trip: got %v, want pointer to 5", back.Margin)
+	}
+}
+
+func TestConfig_EffectiveMargin(t *testing.T) {
+	zero := 0
+	five := 5
+	neg := -3
+	cases := []struct {
+		name string
+		in   *int
+		want int
+	}{
+		{"nil defaults to 2", nil, 2},
+		{"explicit zero stays zero", &zero, 0},
+		{"positive passes through", &five, 5},
+		{"negative clamps to zero", &neg, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := Config{Margin: c.in}
+			if got := cfg.effectiveMargin(); got != c.want {
+				t.Errorf("effectiveMargin: got %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+func TestConfigJSON_PowerlineStyleRoundTrip(t *testing.T) {
+	// Empty omits the key.
+	out, err := json.Marshal(Config{})
+	if err != nil {
+		t.Fatalf("marshal zero: %v", err)
+	}
+	if strings.Contains(string(out), `"powerline_style"`) {
+		t.Errorf("empty powerline_style must be omitted, got %s", out)
+	}
+
+	for _, v := range []string{"thin", "solid", "invalid"} {
+		out, err := json.Marshal(Config{PowerlineStyle: v})
+		if err != nil {
+			t.Fatalf("marshal %q: %v", v, err)
+		}
+		want := `"powerline_style":"` + v + `"`
+		if !strings.Contains(string(out), want) {
+			t.Errorf("Config{PowerlineStyle:%q} must encode %q, got %s", v, want, out)
+		}
+		var back Config
+		if err := json.Unmarshal(out, &back); err != nil {
+			t.Fatalf("unmarshal %q: %v", v, err)
+		}
+		if back.PowerlineStyle != v {
+			t.Errorf("round-trip %q: got %q", v, back.PowerlineStyle)
+		}
+	}
+}
+
+func TestPickGlyph(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", powerlineThinGlyph},
+		{"thin", powerlineThinGlyph},
+		{"solid", powerlineSolidGlyph},
+		{"invalid", powerlineThinGlyph}, // unknown defaults to thin
+		{"THIN", powerlineThinGlyph},    // case-sensitive, falls back to thin
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := pickGlyph(c.in); got != c.want {
+				t.Errorf("pickGlyph(%q): got %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestRowJSON_PaletteRoundTrip(t *testing.T) {
+	// Empty omits the key.
+	out, err := json.Marshal(Row{Segments: []Segment{{Type: "text", Label: "x"}}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), `"palette"`) {
+		t.Errorf("empty palette must be omitted, got %s", out)
+	}
+
+	// Non-empty palette round-trips and coexists with bg.
+	in := Row{
+		Bg:       "234",
+		Palette:  []string{"234", "236", "238"},
+		Segments: []Segment{{Type: "text", Label: "a"}},
+	}
+	out, err = json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal full: %v", err)
+	}
+	if !strings.Contains(string(out), `"palette":["234","236","238"]`) {
+		t.Errorf("palette must encode as array, got %s", out)
+	}
+	if !strings.Contains(string(out), `"bg":"234"`) {
+		t.Errorf("bg must coexist with palette, got %s", out)
+	}
+
+	var back Row
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(back.Palette) != 3 || back.Palette[0] != "234" || back.Palette[1] != "236" || back.Palette[2] != "238" {
+		t.Errorf("palette round-trip: got %v", back.Palette)
+	}
+	if back.Bg != "234" {
+		t.Errorf("bg round-trip: got %q", back.Bg)
+	}
+}
+
+func TestEffectiveSegmentBg(t *testing.T) {
+	cases := []struct {
+		name            string
+		row             Row
+		seg             Segment
+		visibleIndex    int
+		powerlineActive bool
+		want            string
+	}{
+		{
+			name: "Segment.BG overrides everything",
+			row:  Row{Bg: "100", Palette: []string{"234"}},
+			seg:  Segment{BG: "200"},
+			want: "200",
+		},
+		{
+			name:         "Palette rotates by visibleIndex",
+			row:          Row{Palette: []string{"234", "236", "238"}},
+			seg:          Segment{},
+			visibleIndex: 4,
+			want:         "236", // 4 % 3 == 1
+		},
+		{
+			name: "Row.Bg used when no Palette and no Segment.BG",
+			row:  Row{Bg: "100"},
+			seg:  Segment{},
+			want: "100",
+		},
+		{
+			name:            "defaultPalette when Powerline and no other source",
+			row:             Row{},
+			seg:             Segment{},
+			visibleIndex:    1,
+			powerlineActive: true,
+			want:            "236", // defaultPalette[1]
+		},
+		{
+			name:            "empty string when no Powerline and no source",
+			row:             Row{},
+			seg:             Segment{},
+			powerlineActive: false,
+			want:            "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := effectiveSegmentBg(c.row, c.seg, c.visibleIndex, c.powerlineActive)
+			if got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestEffectiveSegmentBg_PaletteRotation(t *testing.T) {
+	row := Row{Palette: []string{"234", "236", "238"}}
+	want := []string{"234", "236", "238", "234", "236"}
+	for i, w := range want {
+		if got := effectiveSegmentBg(row, Segment{}, i, true); got != w {
+			t.Errorf("visibleIndex=%d: got %q, want %q", i, got, w)
+		}
+	}
+}
+
+// intPtr returns a pointer to v. Used by Config tests that need to
+// distinguish "explicit zero" from "unset" on Config.Margin.
+func intPtr(v int) *int { return &v }
+
+func TestRenderRowNatural_HonorsMargin(t *testing.T) {
+	row := Row{Segments: []Segment{{Type: "text", Label: "hello"}}}
+	env := renderEnv{colorEnabled: false, margin: 3}
+	got := renderRowNatural(&payload{}, row, env, " | ")
+	if got != "   hello" {
+		t.Errorf("got %q, want %q", got, "   hello")
+	}
+}
+
+func TestRender_DefaultMarginAppliesToNaturalRows(t *testing.T) {
+	cfg := Config{
+		Rows: []Row{{Segments: []Segment{{Type: "text", Label: "x"}}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "  x" {
+		t.Errorf("got %q, want %q (2 default margin spaces + 'x')", got, "  x")
+	}
+}
+
+func TestRender_ExplicitZeroMarginSuppresses(t *testing.T) {
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows:   []Row{{Segments: []Segment{{Type: "text", Label: "x"}}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "x" {
+		t.Errorf("got %q, want %q (no margin)", got, "x")
+	}
+}
+
+func TestRender_MarginDegradesOnNarrowTerminal(t *testing.T) {
+	// Stub /dev/tty so Render sees a deliberately narrow terminal.
+	prevDev := devTTYWinsizeReader
+	defer func() { devTTYWinsizeReader = prevDev }()
+	devTTYWinsizeReader = func() (int, int, bool) { return 5, 24, true }
+
+	ten := 10
+	cfg := Config{
+		Margin: &ten, // larger than half the terminal width
+		Rows:   []Row{{Segments: []Segment{{Type: "text", Label: "x"}}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// 2*margin > ttyCols means margin must clamp to 0 — output has
+	// no leading spaces.
+	if got != "x" {
+		t.Errorf("got %q, want %q (margin must clamp when terminal narrower than 2*margin)", got, "x")
+	}
+}
+
+func TestRenderRowPowerline_AlternatingPaletteEmitsDistinctBgs(t *testing.T) {
+	row := Row{
+		Palette: []string{"234", "236", "238"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+			{Type: "text", Label: "C"},
+		},
+	}
+	env := renderEnv{colorEnabled: true}
+	got := renderRowPowerline(&payload{}, row, env)
+	for _, want := range []string{"\x1b[48;5;234m", "\x1b[48;5;236m", "\x1b[48;5;238m"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in output\nfull: %q", want, got)
+		}
+	}
+}
+
+func TestRenderRowPowerline_ChevronTransitionColors(t *testing.T) {
+	row := Row{
+		Palette: []string{"234", "236"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+		},
+	}
+	env := renderEnv{colorEnabled: true}
+	got := renderRowPowerline(&payload{}, row, env)
+	// Chevron fg = prev.bg (234), bg = next.bg (236).
+	if !strings.Contains(got, "\x1b[38;5;234m") {
+		t.Errorf("chevron fg = 234 missing\nfull: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[48;5;236m") {
+		t.Errorf("chevron bg = 236 missing\nfull: %q", got)
+	}
+}
+
+func TestRenderRowPowerline_ChevronUniformBgFallback(t *testing.T) {
+	// Adjacent segments share the same bg via Row.Bg. The chevron fg
+	// must fall back to defaultSameBgChevronFG ("245") instead of the
+	// transition rule (which would make the chevron invisible).
+	row := Row{
+		Bg: "234",
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+		},
+	}
+	env := renderEnv{colorEnabled: true}
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.Contains(got, "\x1b[38;5;245m") {
+		t.Errorf("same-bg fallback fg = 245 missing\nfull: %q", got)
+	}
+}
+
+func TestRenderRowPowerline_SolidGlyph(t *testing.T) {
+	row := Row{
+		Palette: []string{"234", "236"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+		},
+	}
+	env := renderEnv{colorEnabled: true, powerlineStyle: powerlineStyleSolid}
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.Contains(got, powerlineSolidGlyph) {
+		t.Errorf("solid glyph missing\nfull: %q", got)
+	}
+	if strings.Contains(got, powerlineThinGlyph) {
+		t.Errorf("thin glyph must not appear when style=solid\nfull: %q", got)
+	}
+}
+
+func TestRenderRowPowerline_DefaultGlyphIsThin(t *testing.T) {
+	row := Row{
+		Palette:  []string{"234", "236"},
+		Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}},
+	}
+	env := renderEnv{colorEnabled: true} // powerlineStyle: "" → thin
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.Contains(got, powerlineThinGlyph) {
+		t.Errorf("thin glyph missing\nfull: %q", got)
+	}
+}
+
+func TestRenderRowPowerline_DefaultPaletteUsedWhenNoConfig(t *testing.T) {
+	row := Row{
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+			{Type: "text", Label: "C"},
+		},
+	}
+	env := renderEnv{colorEnabled: true}
+	got := renderRowPowerline(&payload{}, row, env)
+	for _, want := range []string{"\x1b[48;5;234m", "\x1b[48;5;236m", "\x1b[48;5;238m"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("default-palette bg %q missing\nfull: %q", want, got)
+		}
+	}
+}
+
+func TestRenderRowPowerline_EmptySegmentDoesNotConsumePaletteSlot(t *testing.T) {
+	// `mode` renders empty when neither thinking nor fast_mode is set.
+	// The remaining visible segments must use palette slots 0 and 1,
+	// not 0 and 2.
+	row := Row{
+		Palette: []string{"234", "236", "238"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "mode"}, // empty
+			{Type: "text", Label: "B"},
+		},
+	}
+	env := renderEnv{colorEnabled: true}
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.Contains(got, "\x1b[48;5;234m") {
+		t.Errorf("first visible seg must use palette[0] = 234\nfull: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[48;5;236m") {
+		t.Errorf("second visible seg must use palette[1] = 236\nfull: %q", got)
+	}
+	if strings.Contains(got, "\x1b[48;5;238m") {
+		t.Errorf("palette[2] = 238 must NOT appear (only 2 visible segments)\nfull: %q", got)
+	}
+}
+
+func TestRenderRowPowerline_PrependsMargin(t *testing.T) {
+	row := Row{
+		Palette:  []string{"234"},
+		Segments: []Segment{{Type: "text", Label: "A"}},
+	}
+	env := renderEnv{colorEnabled: true, margin: 2}
+	got := renderRowPowerline(&payload{}, row, env)
+	if !strings.HasPrefix(got, "  ") {
+		t.Errorf("output must start with 2 plain spaces, got %q", got)
+	}
+}
+
+func TestRenderRowPowerline_UsableWidthShrunkByMargin(t *testing.T) {
+	// ttyCols=80, margin=2 → usable bg-fill = 76. Three 1-col segments
+	// + 2 separators of width 3 = 9 cols used. Pad = 76 - 9 = 67.
+	// Plus 2 leading plain margin cols = 78 cols of visible output.
+	row := Row{
+		Palette: []string{"234", "236", "238"},
+		Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B"},
+			{Type: "text", Label: "C"},
+		},
+	}
+	env := renderEnv{colorEnabled: true, ttyCols: 80, margin: 2}
+	got := renderRowPowerline(&payload{}, row, env)
+	if w := displayWidth(got); w != 78 {
+		t.Errorf("padded visible width: got %d, want 78 (= 2 margin + (80-4) usable)\noutput: %q", w, got)
 	}
 }

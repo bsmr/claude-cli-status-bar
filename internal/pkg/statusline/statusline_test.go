@@ -406,8 +406,10 @@ func TestRun_CancelledContextReturnsError(t *testing.T) {
 func TestRun_NativeRenderWhenNoProxy(t *testing.T) {
 	ctx := context.Background()
 	body := `{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`
+	zero := 0
 	cfg := render.Config{
-		Rows: []render.Row{{Segments: []render.Segment{{Type: "model"}, {Type: "cwd"}}}},
+		Margin: &zero,
+		Rows:   []render.Row{{Segments: []render.Segment{{Type: "model"}, {Type: "cwd"}}}},
 	}
 	var out, errOut bytes.Buffer
 	err := statusline.Run(ctx, statusline.Options{Render: cfg, NoColor: true}, strings.NewReader(body), &out, &errOut)

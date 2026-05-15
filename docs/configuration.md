@@ -40,8 +40,10 @@ renderer with the default layout.
 | ----------- | --------------- | ------------- | ----------------------------------------------------------- |
 | `rows`      | array of arrays | default rows  | Each inner array is one output line. Segments in a row are joined with `separator`. |
 | `separator` | string          | `" \| "`      | Joiner between segments in the same row.                    |
-| `powerline` | bool            | `false`       | When true, each row's `bg` fills the terminal width and segments are joined with the U+E0B1 thin chevron. See [Powerline](#powerline). |
+| `powerline` | bool            | `false`       | When true, each row gets a coloured background fill (from `bg`, `palette`, or the built-in default palette) and segments are joined with a Powerline chevron. The glyph is selectable via `powerline_style`. See [Powerline](#powerline). |
 | `width`     | int             | `0`           | Explicit terminal-cols override. When `> 0`, ccsb skips terminal-size detection and uses this value. Default `0` runs the detection chain (`/dev/tty` ioctl, then `/proc` parent-process walk). |
+| `margin`    | int             | `2`           | Plain (no-bg) leading spaces per row; usable bg-fill width is shrunk by `2*margin`. Leaves room for Claude Code's built-in statusLine chrome on each side. Set to `0` to disable. Defaults to `2` when omitted; negative values clamp to `0`. |
+| `powerline_style` | string    | `"thin"`      | Chevron glyph in Powerline mode. `"thin"` (default) renders U+E0B1; `"solid"` renders U+E0B0 as a filled wedge. Unknown values silently fall back to `"thin"`. |
 
 When `rows` is omitted or empty, the renderer uses the built-in default:
 
@@ -79,6 +81,25 @@ writes back the object form whenever it persists the config (e.g.,
 on `ccsb install` or `ccsb mode`), so a legacy config is migrated
 automatically the next time ccsb modifies the file.
 
+Within the object form, an optional `palette` field accepts an array
+of ANSI 256-color strings:
+
+```json
+{"palette": ["234", "236", "238"], "segments": [...]}
+```
+
+When set, the palette rotates across the row's **visible** segments —
+empty segments (e.g. `mode` when neither thinking nor fast_mode is
+set) do not consume a palette slot. Index N takes
+`palette[N % len(palette)]`.
+
+The effective background of each segment is resolved in priority
+order: explicit `Segment.bg` > `Row.palette` rotation > `Row.bg`
+(uniform fill) > built-in `defaultPalette` of three subtle dark
+greys (`["234", "236", "238"]`, applied only when Powerline is
+enabled). If all four are unset and Powerline is off, the segment
+has no background.
+
 ### Last-resort fallback
 
 If the JSON payload from Claude Code is unparsable, ccsb emits a single
@@ -97,10 +118,16 @@ row layout:
   otherwise from a `/proc` parent-process walk. When every source
   fails, the row falls back to natural width and the bg ends after
   the last segment.
-- Segments are joined with the U+E0B1 thin chevron in a muted-grey
-  foreground (`245`), with a single space on each side for breathing
-  room. The chevron has no background of its own, so the row's
-  background shows through the spaces and the glyph.
+- Segments are joined with a Powerline chevron in classic
+  transition colours: the chevron's foreground is the **previous**
+  segment's effective background, its background is the **next**
+  segment's effective background. When both adjacent backgrounds
+  are the same (legacy uniform-bg configs without a palette), the
+  chevron foreground falls back to `245` so it stays visible. The
+  glyph defaults to the U+E0B1 thin chevron and switches to U+E0B0
+  solid wedge when `powerline_style: "solid"` is set in the config.
+  A single space surrounds the glyph on each side; those spaces
+  inherit the next segment's background.
 - Per-segment `fg` / `bg` / `bold` continue to apply *inside* the
   row-bg. A segment with its own `bg` overrides the row-bg for
   that segment's text.
@@ -139,8 +166,53 @@ Example two-row config with a two-tone palette:
 }
 ```
 
-The chevron glyph and its foreground are hardcoded in 0.2.0; future
-releases may expose them as config knobs.
+For a classic alternating-Powerline look within a single row, use
+`palette` instead of a single `bg`:
+
+```json
+{
+  "render": {
+    "powerline": true,
+    "rows": [
+      {"palette": ["234", "236", "238"], "segments": [
+        {"type": "model", "fg": "33", "bold": true},
+        {"type": "context", "style": "bar+pct", "fg": "245"},
+        {"type": "limit_5h", "fg": "245"},
+        {"type": "limit_7d", "fg": "245"}
+      ]},
+      {"palette": ["237", "238", "237"], "segments": [
+        {"type": "git_branch", "fg": "33"},
+        {"type": "cwd", "fg": "245"}
+      ]}
+    ]
+  }
+}
+```
+
+Each visible segment gets a bg from its row's palette (modulo
+rotation), and the chevron between segments transitions between
+those bgs. When `powerline` is `true` and neither `bg` nor
+`palette` is set on a row, the built-in default palette
+`["234", "236", "238"]` is applied automatically.
+
+**Migration from uniform `bg` to `palette`** (0.2.2 → 0.2.3): if
+your existing config uses a single `bg` per row, the visual is
+preserved unchanged in 0.2.3 — chevrons fall back to the muted-grey
+`245` foreground on the uniform background. To opt into the
+alternating-Powerline look, replace `bg` with `palette` on each
+row:
+
+```diff
+-{"bg": "234", "segments": [...]}
++{"palette": ["234", "236", "238"], "segments": [...]}
+```
+
+You can keep `bg` alongside `palette` — `palette` wins for segment
+fills, and `bg` becomes the row-level fallback that the renderer
+ignores when the palette is non-empty.
+
+The chevron glyph is selectable via `powerline_style`; its colours
+are derived from adjacent backgrounds.
 
 ## Segments
 
