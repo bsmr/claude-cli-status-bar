@@ -43,6 +43,12 @@ type Config struct {
 	// values silently fall back to thin so a typo cannot break
 	// rendering.
 	PowerlineStyle string `json:"powerline_style,omitempty"`
+	// CapStyle selects the end-cap glyph variant when a row's Caps
+	// field is true. "" or "round" (default) renders U+E0B6 / U+E0B4
+	// filled half-circles. "square" emits a 1-col plain bg-painted
+	// space on each side. "slant" renders U+E0BC / U+E0BA filled
+	// triangles. Unknown values fall back to "round".
+	CapStyle string `json:"cap_style,omitempty"`
 }
 
 // defaultMargin is the implicit Config.Margin when the field is unset.
@@ -76,12 +82,22 @@ type Row struct {
 	// resolution falls through to Bg (uniform fill) and finally to
 	// the package-level defaultPalette when Powerline is active.
 	Palette []string `json:"palette,omitempty"`
+	// Caps, when true, emits a 1-col cap glyph on each end where
+	// the outermost visible segment has an effective bg. Both
+	// sides are evaluated independently — a row whose first segment
+	// has a bg but whose last does not gets a left cap only. The
+	// glyph variant is selected globally via Config.CapStyle. Each
+	// enabled cap consumes 1 column from the row's usable bg-fill
+	// width.
+	Caps bool `json:"caps,omitempty"`
 }
 
 // UnmarshalJSON accepts two shapes:
 //   - The legacy 0.1.x bare array of segments: [{...},{...}]
-//     → unmarshals into Row{Segments: ..., Bg: ""}.
-//   - The 0.2.0 native object form: {"segments":[...], "bg":"234"}.
+//     → unmarshals into a Row whose Segments field carries the decoded
+//     array; all other Row fields are zero-valued (Bg "", Palette nil,
+//     Caps false).
+//   - The 0.2.0 native object form: {"segments":[...], "bg":"234", ...}.
 //
 // Detection is by the first non-whitespace byte: '[' for array, '{' for
 // object. All other tokens (null, numbers, strings, booleans) are
@@ -254,12 +270,45 @@ const (
 	powerlineThinGlyph  = "" // U+E0B1 RIGHT TRIANGLE LINE
 	powerlineSolidGlyph = "" // U+E0B0 RIGHT TRIANGLE FILL
 
+	// Cap-style identifiers for Config.CapStyle.
+	capStyleRound  = "round"
+	capStyleSquare = "square"
+	capStyleSlant  = "slant"
+
+	// Round caps: filled half-circles.
+	powerlineLeftCapRound  = "" // U+E0B6 LEFT HALF CIRCLE THICK
+	powerlineRightCapRound = "" // U+E0B4 RIGHT HALF CIRCLE THICK
+
+	// Slant caps: filled triangles.
+	powerlineLeftCapSlant  = "" // U+E0BC UPPER-LEFT TRIANGLE FILLED
+	powerlineRightCapSlant = "" // U+E0BA LOWER-RIGHT TRIANGLE FILLED
+
 	// defaultSameBgChevronFG is the chevron foreground when the two
 	// adjacent segments share the same effective bg (no real
 	// transition). Preserves the 0.2.0 visual for legacy uniform-bg
 	// configs.
 	defaultSameBgChevronFG = "245"
 )
+
+// capGlyphs carries the (left, right) glyph pair for a cap style.
+// Empty strings are the "square" sentinel: emit a 1-col bg-painted
+// space instead of a glyph.
+type capGlyphs struct {
+	left, right string
+}
+
+// pickCapGlyphs maps Config.CapStyle to its (left, right) glyph
+// pair. Empty/unknown styles fall back to round.
+func pickCapGlyphs(style string) capGlyphs {
+	switch style {
+	case capStyleSquare:
+		return capGlyphs{} // sentinel: square path
+	case capStyleSlant:
+		return capGlyphs{left: powerlineLeftCapSlant, right: powerlineRightCapSlant}
+	default: // round, "", or unknown
+		return capGlyphs{left: powerlineLeftCapRound, right: powerlineRightCapRound}
+	}
+}
 
 // defaultPalette rotates per visible segment when neither Row.Bg
 // nor Row.Palette is configured and Powerline is enabled. Three
@@ -346,6 +395,7 @@ func Render(opts Options, raw []byte) (string, error) {
 		colorEnabled:   !opts.NoColor,
 		nowUnix:        nowFunc().Unix(),
 		powerlineStyle: opts.Config.PowerlineStyle,
+		capStyle:       opts.Config.CapStyle,
 	}
 	env.ttyCols, env.ttyRows = discoverTermSize(opts.Config)
 	env.margin = opts.Config.effectiveMargin()
@@ -403,6 +453,7 @@ type renderEnv struct {
 	ttyRows        int    // detected terminal rows, 0 when unknown
 	margin         int    // plain leading spaces per row; usable bg-fill width = ttyCols - 2*margin
 	powerlineStyle string // "thin" (default) | "solid"; used by renderRowPowerline via pickGlyph
+	capStyle       string // "" / "round" / "square" / "slant"; "" → round
 }
 
 // renderSegment dispatches one segment via the registry. Unknown types
@@ -521,6 +572,31 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 		b.WriteString(strings.Repeat(" ", env.margin))
 	}
 
+	// 2.5. Resolve cap presence and glyphs once per row.
+	caps := pickCapGlyphs(env.capStyle)
+	hasLeftCap := row.Caps && visible[0].bg != ""
+	hasRightCap := row.Caps && visible[len(visible)-1].bg != ""
+
+	// 2.6. Left cap: glyph in fg=first.bg on default bg, or a 1-col
+	//      bg-painted plain space for "square" style.
+	if hasLeftCap {
+		firstBg := visible[0].bg
+		if caps.left == "" {
+			// Square: 1 col of plain first.bg-painted space.
+			b.WriteString(bg256(firstBg))
+			b.WriteString(" ")
+		} else {
+			// Round / slant: glyph in fg=firstBg on default bg.
+			// Use \x1b[49m (default-bg only) instead of full reset
+			// because the margin spaces had no styling — there's no
+			// stale fg / bold to clear here.
+			b.WriteString("\x1b[49m") // default bg
+			b.WriteString(fg256(firstBg))
+			b.WriteString(caps.left)
+			b.WriteString(reset)
+		}
+	}
+
 	// 3. Walk segments, interleaving chevrons.
 	for i, seg := range visible {
 		if i == 0 {
@@ -532,16 +608,35 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 			// Chevron transition between visible[i-1] and visible[i].
 			prevBg := visible[i-1].bg
 			nextBg := seg.bg
-			chevFg := prevBg
+
+			// Per-style asymmetric chev-cell geometry:
+			//   solid (U+E0B0): chev-cell bg=next, fg=prev — the
+			//     filled wedge in prev colour visually flows into
+			//     next bg.
+			//   thin  (U+E0B1): chev-cell bg=prev, fg=next — the
+			//     line in next colour sits at the trailing edge of
+			//     prev; the bg switch happens at the post-space.
+			var chevCellBg, chevFg string
+			if env.powerlineStyle == powerlineStyleSolid {
+				chevCellBg, chevFg = nextBg, prevBg
+			} else {
+				chevCellBg, chevFg = prevBg, nextBg
+			}
 			if prevBg == nextBg {
+				// Same-bg fallback: keep the glyph visible via a
+				// static fg so legacy uniform-bg configs do not lose
+				// the separator.
 				chevFg = defaultSameBgChevronFG
 			}
-			// Both spaces around the glyph render in nextBg. The
-			// glyph itself adds chevFg as fg. A full reset closes the
-			// chevron region, then bg256(nextBg) re-asserts bg for the
-			// next segment body.
-			b.WriteString(bg256(nextBg))
+
+			// Powerline transition layout (corrects the 0.2.3 spec
+			// error where both spaces rendered in nextBg):
+			//   pre-space in prevBg (extends prev segment by 1 col),
+			//   chev-cell in (chevCellBg, chevFg),
+			//   post-space in nextBg (extends next segment by 1 col).
+			b.WriteString(bg256(prevBg))
 			b.WriteString(" ")
+			b.WriteString(bg256(chevCellBg))
 			b.WriteString(fg256(chevFg))
 			b.WriteString(glyph)
 			b.WriteString(reset)
@@ -554,9 +649,17 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 		}
 	}
 
-	// 4. Pad to (ttyCols - 2*margin) total visible cols of bg-fill.
+	// 4. Pad to (ttyCols - 2*margin - 2*cap_cols) total visible cols
+	//    of bg-fill so the optional left and right caps each occupy
+	//    1 col within the usable region.
 	if env.ttyCols > 0 {
 		usableCols := env.ttyCols - 2*env.margin
+		if hasLeftCap {
+			usableCols--
+		}
+		if hasRightCap {
+			usableCols--
+		}
 		used := 0
 		for _, seg := range visible {
 			used += displayWidth(seg.body)
@@ -564,6 +667,26 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 		used += (len(visible) - 1) * powerlineSeparatorWidth
 		if remaining := usableCols - used; remaining > 0 {
 			b.WriteString(strings.Repeat(" ", remaining))
+		}
+	}
+
+	// 4.5. Right cap: glyph in fg=last.bg on default bg, or a 1-col
+	//      bg-painted plain space for "square" style.
+	if hasRightCap {
+		lastBg := visible[len(visible)-1].bg
+		if caps.right == "" {
+			// Square: 1 col of plain last.bg-painted space. The bg
+			// is already set to lastBg from the last segment's
+			// trailing bg-restore; padding spaces (if any) inherit
+			// it unchanged.
+			b.WriteString(" ")
+		} else {
+			// Round / slant: full reset clears any fg / bold left
+			// over from the last segment, then fg256(lastBg) + glyph
+			// paints the cap on the terminal's default bg.
+			b.WriteString(reset)
+			b.WriteString(fg256(lastBg))
+			b.WriteString(caps.right)
 		}
 	}
 
