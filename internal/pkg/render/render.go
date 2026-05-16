@@ -260,6 +260,7 @@ var defaultRows = []Row{
 	{Segments: []Segment{{Type: "model", Show1MFlag: true}, {Type: "context", Style: "bar+pct"}}},
 	{Segments: []Segment{{Type: "cost"}, {Type: "limit_5h"}, {Type: "limit_7d"}}},
 	{Segments: []Segment{{Type: "git_branch"}, {Type: "cwd"}}},
+	{Align: "right", Segments: []Segment{{Type: "version"}}},
 }
 
 const defaultSeparator = " | "

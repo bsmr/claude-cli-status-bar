@@ -21,13 +21,39 @@ func TestRender_EmptyConfigUsesDefaultRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	// default layout produces 3 rows
+	// default layout produces 3 rows (version row hidden when Version=="")
 	if n := strings.Count(got, "\n"); n < 2 {
 		t.Errorf("want >=2 newlines, got %d in %q", n, got)
 	}
 	// model segment is now registered, so expect the display name
 	if !strings.Contains(got, "Opus 4.7") {
 		t.Errorf("want Opus 4.7 in output, got %q", got)
+	}
+}
+
+func TestRender_DefaultLayoutShowsVersionWhenSet(t *testing.T) {
+	raw := []byte(`{"model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
+	got, err := Render(Options{NoColor: true, Version: "0.2.7"}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// 4 rows: model, cost, cwd, version
+	if n := strings.Count(got, "\n"); n < 3 {
+		t.Errorf("want >=3 newlines (4 rows), got %d in %q", n, got)
+	}
+	if !strings.HasSuffix(got, "v0.2.7") {
+		t.Errorf("version must appear at end of last row, got %q", got)
+	}
+}
+
+func TestRender_DefaultLayoutDevVersionShowsSkull(t *testing.T) {
+	raw := []byte(`{"model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
+	got, err := Render(Options{NoColor: true, Version: "dev"}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.HasSuffix(got, "☠ vdev") {
+		t.Errorf("dev version must end with skull prefix, got %q", got)
 	}
 }
 
