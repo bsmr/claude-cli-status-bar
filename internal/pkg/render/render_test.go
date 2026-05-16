@@ -541,8 +541,8 @@ func TestRender_Limit5hPctTargetColorsOnlyDigits(t *testing.T) {
 	if strings.Contains(got, "\x1b[38;5;160m5h:") {
 		t.Errorf("threshold FG should not wrap the label in pct-target mode, got %q", got)
 	}
-	// The countdown "(5m)" must not appear with the threshold FG.
-	if strings.Contains(got, "\x1b[38;5;160m(") {
+	// The countdown "· 5m" must not start with the threshold FG.
+	if strings.Contains(got, "\x1b[38;5;160m·") {
 		t.Errorf("threshold FG should not wrap the countdown in pct-target mode, got %q", got)
 	}
 }
@@ -1700,6 +1700,118 @@ func TestRenderRowPowerline_CapsWidthMath(t *testing.T) {
 	got := renderRowPowerline(&payload{}, row, env)
 	if w := displayWidth(got); w != 78 {
 		t.Errorf("padded visible width with caps: got %d, want 78 (= margin(2) + cap(1) + content(9) + pad(65) + cap(1))\noutput: %q", w, got)
+	}
+}
+
+func TestRenderRowRight_NoTTYColsDegradesToMarginPlusContent(t *testing.T) {
+	row := Row{Segments: []Segment{{Type: "text", Label: "v0.2.6"}}}
+	env := renderEnv{colorEnabled: false, margin: 2, ttyCols: 0}
+	got := renderRowRight(&payload{}, row, env, " | ")
+	if got != "  v0.2.6" {
+		t.Errorf("got %q, want %q", got, "  v0.2.6")
+	}
+}
+
+func TestRenderRowRight_PadsToRightEdge(t *testing.T) {
+	row := Row{Segments: []Segment{{Type: "text", Label: "AB"}}}
+	env := renderEnv{colorEnabled: false, margin: 2, ttyCols: 20}
+	got := renderRowRight(&payload{}, row, env, " | ")
+	// usable = 20 - 4 = 16; content width = 2; pad = 14
+	// result = "  " + 14 spaces + "AB" = 18 chars visible
+	if w := displayWidth(got); w != 18 {
+		t.Errorf("display width: got %d, want 18 in %q", w, got)
+	}
+	if !strings.HasSuffix(got, "AB") {
+		t.Errorf("content must be at right edge, got %q", got)
+	}
+}
+
+func TestRenderRowRight_ZeroMargin(t *testing.T) {
+	row := Row{Segments: []Segment{{Type: "text", Label: "X"}}}
+	env := renderEnv{colorEnabled: false, margin: 0, ttyCols: 10}
+	got := renderRowRight(&payload{}, row, env, " | ")
+	// usable = 10; pad = 9; total = 10
+	if w := displayWidth(got); w != 10 {
+		t.Errorf("display width: got %d, want 10 in %q", w, got)
+	}
+	if !strings.HasSuffix(got, "X") {
+		t.Errorf("content at right edge, got %q", got)
+	}
+}
+
+func TestRenderRowRight_ContentWiderThanUsable_NoCrash(t *testing.T) {
+	row := Row{Segments: []Segment{{Type: "text", Label: "ABCDEFGHIJ"}}}
+	env := renderEnv{colorEnabled: false, margin: 2, ttyCols: 8}
+	got := renderRowRight(&payload{}, row, env, " | ")
+	// usable = 4; content = 10 > usable → pad = 0; output = "  " + content
+	if got != "  ABCDEFGHIJ" {
+		t.Errorf("got %q, want %q", got, "  ABCDEFGHIJ")
+	}
+}
+
+func TestRenderRowRight_AllEmptySegmentsReturnsEmpty(t *testing.T) {
+	row := Row{Segments: []Segment{{Type: "git_branch"}}}
+	env := renderEnv{colorEnabled: false, margin: 2, ttyCols: 80}
+	if got := renderRowRight(&payload{}, row, env, " | "); got != "" {
+		t.Errorf("got %q, want \"\"", got)
+	}
+}
+
+func TestRender_AlignRightBypassesPowerline(t *testing.T) {
+	// Even with Powerline=true, a row with Align="right" must not emit
+	// row-bg or chevron glyphs.
+	cfg := Config{
+		Powerline: true,
+		Margin:    intPtr(0),
+		Rows: []Row{
+			{
+				Align:    "right",
+				Bg:       "234",
+				Segments: []Segment{{Type: "text", Label: "vX"}},
+			},
+		},
+	}
+	prevDev := devTTYWinsizeReader
+	defer func() { devTTYWinsizeReader = prevDev }()
+	devTTYWinsizeReader = func() (int, int, bool) { return 20, 24, true }
+
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.HasSuffix(got, "vX") {
+		t.Errorf("right-aligned row must end with content, got %q", got)
+	}
+	if strings.Contains(got, powerlineThinGlyph) || strings.Contains(got, "\x1b[48;5;234m") {
+		t.Errorf("right-aligned row must bypass Powerline, got %q", got)
+	}
+}
+
+func TestRender_VersionSegmentRendersVersion(t *testing.T) {
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows:   []Row{{Segments: []Segment{{Type: "version"}}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true, Version: "1.2.3"}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "v1.2.3" {
+		t.Errorf("got %q, want v1.2.3", got)
+	}
+}
+
+func TestRender_VersionSegmentHiddenWhenVersionEmpty(t *testing.T) {
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows:   []Row{{Segments: []Segment{{Type: "version"}}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true, Version: ""}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "" {
+		t.Errorf("version segment must be hidden when Version is empty, got %q", got)
 	}
 }
 
