@@ -143,8 +143,8 @@ func TestRenderContext_BarPlusPctDefault(t *testing.T) {
 	p.Context.ContextWindowSize = 1_000_000
 	p.Context.TotalInputTokens = 273_000
 	got := renderContext(p, Segment{Style: "bar+pct"}, renderEnv{})
-	// 27% of 16-cell bar = ~4 filled cells
-	if got != "[████░░░░░░░░░░░░] 27% 273k/1M" {
+	// 27% of 16-cell bar: 27×64/100=17.28 → 17 quarters → 4 full + remainder 1 (◔)
+	if got != "●●●●◔○○○○○○○○○○○ 27% 273k/1M" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -160,7 +160,7 @@ func TestRenderContext_PctOnlyStyle(t *testing.T) {
 func TestRenderContext_BarOnlyStyle(t *testing.T) {
 	p := &payload{}
 	p.Context.UsedPercentage = 27
-	if got := renderContext(p, Segment{Style: "bar"}, renderEnv{}); got != "[████░░░░░░░░░░░░]" {
+	if got := renderContext(p, Segment{Style: "bar"}, renderEnv{}); got != "●●●●◔○○○○○○○○○○○" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -170,7 +170,7 @@ func TestRenderContext_EmptyStyleDefaultsToBarPct(t *testing.T) {
 	p.Context.UsedPercentage = 50
 	p.Context.ContextWindowSize = 200_000
 	p.Context.TotalInputTokens = 100_000
-	if got := renderContext(p, Segment{}, renderEnv{}); got != "[████████░░░░░░░░] 50% 100k/200k" {
+	if got := renderContext(p, Segment{}, renderEnv{}); got != "●●●●●●●●○○○○○○○○ 50% 100k/200k" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -178,6 +178,28 @@ func TestRenderContext_EmptyStyleDefaultsToBarPct(t *testing.T) {
 func TestRenderContext_HiddenWhenNoData(t *testing.T) {
 	if got := renderContext(&payload{}, Segment{}, renderEnv{}); got != "" {
 		t.Errorf("expected empty when no data, got %q", got)
+	}
+}
+
+func TestMakeBar_CircleSequence(t *testing.T) {
+	// 4-cell bar: 16 quarter-steps total; each quarter-step = 6.25 pp.
+	// 1 full cell = 4 quarters = 25 pp.
+	for _, tc := range []struct {
+		pct  float64
+		want string
+	}{
+		{0, "○○○○"},
+		{25, "●○○○"},    // exactly 1 full cell (4 quarters)
+		{50, "●●○○"},    // 2 full cells
+		{100, "●●●●"},   // all full
+		{6.25, "◔○○○"},  // 0 full, remainder 1
+		{12.5, "◑○○○"},  // 0 full, remainder 2
+		{18.75, "◕○○○"}, // 0 full, remainder 3
+		{31.25, "●◔○○"}, // 1 full, remainder 1
+	} {
+		if got := makeBar(tc.pct, 4); got != tc.want {
+			t.Errorf("makeBar(%.4f, 4) = %q, want %q", tc.pct, got, tc.want)
+		}
 	}
 }
 
@@ -235,7 +257,7 @@ func TestRenderLimit5h_BarStyle(t *testing.T) {
 	p.Limits.FiveHour.ResetsAt = 1000
 	env := renderEnv{nowUnix: 500}
 	got := renderLimit5h(p, Segment{Style: "bar"}, env)
-	want := "5h: [████████░░░░░░░░]"
+	want := "5h: ●●●●●●●●○○○○○○○○"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -247,7 +269,7 @@ func TestRenderLimit5h_BarPctStyleIncludesCountdown(t *testing.T) {
 	p.Limits.FiveHour.ResetsAt = 500 + 60
 	env := renderEnv{nowUnix: 500}
 	got := renderLimit5h(p, Segment{Style: "bar+pct"}, env)
-	want := "5h: [████████░░░░░░░░] 50% (1m)"
+	want := "5h: ●●●●●●●●○○○○○○○○ 50% (1m)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -259,7 +281,7 @@ func TestRenderLimit5h_BarPctWithoutResetOmitsCountdown(t *testing.T) {
 	// ResetsAt zero
 	env := renderEnv{nowUnix: 500}
 	got := renderLimit5h(p, Segment{Style: "bar+pct"}, env)
-	want := "5h: [████████░░░░░░░░] 50%"
+	want := "5h: ●●●●●●●●○○○○○○○○ 50%"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

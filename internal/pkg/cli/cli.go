@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/capture"
@@ -63,7 +64,7 @@ type UnknownSubcommandError struct {
 }
 
 func (e *UnknownSubcommandError) Error() string {
-	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, version, help)", e.Name)
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, doctor, version, help)", e.Name)
 }
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
@@ -87,6 +88,8 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runStatus(p, stdout)
 	case "mode":
 		return runMode(p, args[1:], stdout)
+	case "doctor":
+		return runDoctor(p, stdout)
 	default:
 		return &UnknownSubcommandError{Name: args[0]}
 	}
@@ -126,8 +129,11 @@ func runInstall(p Paths, stdout io.Writer) error {
 			// native mode. The backup is still preserved for uninstall.
 			if !isCanonicalCcstatusline(existing) {
 				if cmd, args, ok := extractCommand(existing); ok {
-					cfg.Proxy.Command = cmd
-					cfg.Proxy.Args = args
+					// Don't proxy another ccsb binary — use native mode instead.
+					if filepath.Base(cmd) != filepath.Base(p.Self) {
+						cfg.Proxy.Command = cmd
+						cfg.Proxy.Args = args
+					}
 				}
 			}
 		} else {
@@ -209,7 +215,11 @@ func runStatus(p Paths, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "ccsb: mode:     %s\n", currentMode(cfg))
 	if cfg.Proxy.Command != "" {
 		args := strings.Join(cfg.Proxy.Args, " ")
-		fmt.Fprintf(stdout, "ccsb: proxy:    %s %s\n", cfg.Proxy.Command, args)
+		if issue := proxyIssue(cfg.Proxy.Command, p.Self); issue != "" {
+			fmt.Fprintf(stdout, "ccsb: proxy:    %s %s  [WARNING: %s]\n", cfg.Proxy.Command, args, issue)
+		} else {
+			fmt.Fprintf(stdout, "ccsb: proxy:    %s %s\n", cfg.Proxy.Command, args)
+		}
 	} else {
 		fmt.Fprintln(stdout, "ccsb: proxy:    (none — built-in fallback)")
 	}
@@ -245,6 +255,9 @@ Subcommands:
               argument. With "native", clear the proxy block; with "proxy",
               set it to "npx -y ccstatusline@latest" by default or to the
               given command and arguments.
+  doctor      Diagnose and auto-fix configuration problems: re-installs if
+              settings.json is not hooked; switches to native mode if the
+              proxy command is circular, another ccsb binary, or missing.
   version     Print the ccsb version. Aliases: -v, --version.
   help        Print this message.
 `

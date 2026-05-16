@@ -184,20 +184,35 @@ func renderContext(p *payload, s Segment, env renderEnv) string {
 	}
 }
 
-// makeBar renders a unicode block-element bar of length cells, filled
-// proportionally to pct (0-100, clamped to that range).
+// circleSteps maps quarter-fill level (0–4) to a Unicode circle glyph.
+var circleSteps = [5]string{
+	"○", // ○ U+25CB WHITE CIRCLE            (0/4)
+	"◔", // ◔ U+25D4 UPPER-RIGHT QUADRANT    (1/4)
+	"◑", // ◑ U+25D1 RIGHT HALF BLACK         (2/4)
+	"◕", // ◕ U+25D5 ALL BUT UPPER-LEFT       (3/4)
+	"●", // ● U+25CF BLACK CIRCLE             (4/4)
+}
+
+// makeBar renders a circle-based bar of length cells, filled proportionally
+// to pct (0–100, clamped). Each cell has 5 states (0, ¼, ½, ¾, full),
+// yielding cells×4 discrete steps.
 func makeBar(pct float64, cells int) string {
-	filled := int(pct * float64(cells) / 100)
-	filled = min(max(filled, 0), cells)
+	total := cells * 4
+	quarters := int(pct*float64(total)/100 + 0.5)
+	quarters = min(max(quarters, 0), total)
+	fullCells := quarters / 4
+	remainder := quarters % 4
 	var b strings.Builder
-	b.WriteByte('[')
-	for range filled {
-		b.WriteString("█") // U+2588 FULL BLOCK
+	for i := range cells {
+		switch {
+		case i < fullCells:
+			b.WriteString(circleSteps[4])
+		case i == fullCells && remainder > 0:
+			b.WriteString(circleSteps[remainder])
+		default:
+			b.WriteString(circleSteps[0])
+		}
 	}
-	for range cells - filled {
-		b.WriteString("░") // U+2591 LIGHT SHADE
-	}
-	b.WriteByte(']')
 	return b.String()
 }
 
