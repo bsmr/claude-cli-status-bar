@@ -163,6 +163,17 @@ type Segment struct {
 	// bar cells, tokens, and labels in the segment's static FG.
 	// Unknown values fall back to "all".
 	ThresholdTarget string `json:"threshold_target,omitempty"`
+
+	// Align, when "right", anchors this segment (and every following
+	// segment in the same row) to the right edge of the usable width.
+	// The slack between the preceding left-group and the first
+	// right-aligned segment becomes padding. In Powerline mode the
+	// padding inherits the bg of the last left-aligned visible
+	// segment so it reads as a visual extension of that segment.
+	// Degrades to inline (no padding) when terminal width is unknown
+	// or the row already overflows. Unknown values are ignored
+	// (treated as left).
+	Align string `json:"align,omitempty"`
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage
@@ -437,23 +448,71 @@ func Render(opts Options, raw []byte) (string, error) {
 // segment, join them with the configured separator, then prepend any
 // configured margin. Returns "" when every segment renders empty so
 // the row joiner skips the row.
+//
+// Per-segment Align="right" splits the row into a left group and a
+// right group; the first right-aligned segment marks the split point
+// and every later segment joins the right group regardless of its
+// own Align. The gap between groups is padded with spaces so the
+// right group ends flush with the usable width (ttyCols - 2*margin).
+// Degrades to the inline join (no padding) when ttyCols is unknown
+// or the row already overflows the usable width.
 func renderRowNatural(p *payload, row Row, env renderEnv, sep string) string {
-	var parts []string
+	type renderedPart struct {
+		body  string
+		align string
+	}
+	var parts []renderedPart
 	for _, seg := range row.Segments {
 		s := renderSegment(p, seg, env)
 		if s == "" {
 			continue
 		}
-		parts = append(parts, s)
+		parts = append(parts, renderedPart{body: s, align: seg.Align})
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	joined := strings.Join(parts, sep)
-	if env.margin > 0 {
-		return strings.Repeat(" ", env.margin) + joined
+
+	splitIdx := len(parts)
+	for i, p := range parts {
+		if p.align == "right" {
+			splitIdx = i
+			break
+		}
 	}
-	return joined
+
+	prefix := strings.Repeat(" ", env.margin)
+
+	if splitIdx == len(parts) {
+		bodies := make([]string, len(parts))
+		for i, p := range parts {
+			bodies[i] = p.body
+		}
+		return prefix + strings.Join(bodies, sep)
+	}
+
+	leftBodies := make([]string, splitIdx)
+	for i := range splitIdx {
+		leftBodies[i] = parts[i].body
+	}
+	rightBodies := make([]string, len(parts)-splitIdx)
+	for i := splitIdx; i < len(parts); i++ {
+		rightBodies[i-splitIdx] = parts[i].body
+	}
+	leftJoined := strings.Join(leftBodies, sep)
+	rightJoined := strings.Join(rightBodies, sep)
+
+	if env.ttyCols <= 0 {
+		bodies := append(leftBodies, rightBodies...)
+		return prefix + strings.Join(bodies, sep)
+	}
+	usable := env.ttyCols - 2*env.margin
+	pad := usable - displayWidth(leftJoined) - displayWidth(rightJoined)
+	if pad <= 0 {
+		bodies := append(leftBodies, rightBodies...)
+		return prefix + strings.Join(bodies, sep)
+	}
+	return prefix + leftJoined + strings.Repeat(" ", pad) + rightJoined
 }
 
 // renderRowRight renders segments as plain text, right-justified within the
@@ -590,8 +649,9 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 
 	// 1. Render visible segments and capture each one's effective bg.
 	type renderedSeg struct {
-		body string
-		bg   string
+		body  string
+		bg    string
+		align string
 	}
 	var visible []renderedSeg
 	for _, seg := range row.Segments {
@@ -600,7 +660,7 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 			continue
 		}
 		bg := effectiveSegmentBg(row, seg, len(visible), true)
-		visible = append(visible, renderedSeg{body: s, bg: bg})
+		visible = append(visible, renderedSeg{body: s, bg: bg, align: seg.Align})
 	}
 	if len(visible) == 0 {
 		return ""
@@ -619,6 +679,45 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 	caps := pickCapGlyphs(env.capStyle)
 	hasLeftCap := row.Caps && visible[0].bg != ""
 	hasRightCap := row.Caps && visible[len(visible)-1].bg != ""
+
+	// 2.7. Locate the split between left-aligned and right-aligned
+	//      groups. The first segment whose Align is "right" marks the
+	//      split — every subsequent segment joins the right group
+	//      regardless of its own Align. splitIdx == len(visible) means
+	//      no right-aligned segment exists and the trailing-padding
+	//      branch in step 4 stays active.
+	splitIdx := len(visible)
+	for i, v := range visible {
+		if v.align == "right" {
+			splitIdx = i
+			break
+		}
+	}
+
+	// 2.8. Pre-compute the right-align gap: usable cols minus the
+	//      visible body widths and chevron separators. When the row
+	//      would overflow the usable width (gap <= 0), the gap is
+	//      skipped and the row degrades to inline rendering with no
+	//      padding inserted between groups.
+	var rightAlignGap int
+	if env.ttyCols > 0 && splitIdx < len(visible) {
+		usableCols := env.ttyCols - 2*env.margin
+		if hasLeftCap {
+			usableCols--
+		}
+		if hasRightCap {
+			usableCols--
+		}
+		used := 0
+		for _, seg := range visible {
+			used += displayWidth(seg.body)
+		}
+		used += (len(visible) - 1) * powerlineSeparatorWidth
+		rightAlignGap = usableCols - used
+		if rightAlignGap < 0 {
+			rightAlignGap = 0
+		}
+	}
 
 	// 2.6. Left cap: glyph in fg=first.bg on default bg, or a 1-col
 	//      bg-painted plain space for "square" style.
@@ -642,6 +741,21 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 
 	// 3. Walk segments, interleaving chevrons.
 	for i, seg := range visible {
+		// 3.0. Right-align gap insertion. Inserted *before* the
+		//      chevron transition or first-segment open so the
+		//      padding renders in the previous segment's bg (Powerline
+		//      continuation) and the normal chevron then carries
+		//      prev.bg → next.bg as usual. When splitIdx == 0 there is
+		//      no previous segment to inherit a bg from — the padding
+		//      renders as plain spaces.
+		if i == splitIdx && rightAlignGap > 0 {
+			if i == 0 {
+				b.WriteString(strings.Repeat(" ", rightAlignGap))
+			} else {
+				b.WriteString(bg256(visible[i-1].bg))
+				b.WriteString(strings.Repeat(" ", rightAlignGap))
+			}
+		}
 		if i == 0 {
 			// First segment: open its bg.
 			if seg.bg != "" {
@@ -694,8 +808,10 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 
 	// 4. Pad to (ttyCols - 2*margin - 2*cap_cols) total visible cols
 	//    of bg-fill so the optional left and right caps each occupy
-	//    1 col within the usable region.
-	if env.ttyCols > 0 {
+	//    1 col within the usable region. Skipped when a right-aligned
+	//    segment exists — the slack was already consumed by the gap
+	//    between the left and right groups in step 3.0.
+	if env.ttyCols > 0 && splitIdx == len(visible) {
 		usableCols := env.ttyCols - 2*env.margin
 		if hasLeftCap {
 			usableCols--
