@@ -214,7 +214,14 @@ If `git branch -vv` shows `main` as `[origin/main: N behind]`, stop and fix this
 
    ```bash
    git branch production-X.Y.Z main
+   git tag vX.Y.Z main
+   git push origin production-X.Y.Z vX.Y.Z
    ```
+
+   The `vX.Y.Z` tag is what the Go module proxy and `go install module@vX.Y.Z`
+   use to resolve the version. `runtime/debug.ReadBuildInfo()` inside ccsb reads
+   it back at startup so `go install`-built binaries show the correct version
+   without any `-ldflags` required.
 
 ### Remotes
 
