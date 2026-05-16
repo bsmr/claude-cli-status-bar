@@ -266,12 +266,48 @@ type thinkF struct {
 // countdown formatting is deterministic.
 var nowFunc = time.Now
 
-// defaultRows is used when Config.Rows is empty.
-var defaultRows = []Row{
-	{Segments: []Segment{{Type: "model", Show1MFlag: true}, {Type: "context", Style: "bar+pct"}}},
-	{Segments: []Segment{{Type: "cost"}, {Type: "limit_5h"}, {Type: "limit_7d"}}},
-	{Segments: []Segment{{Type: "git_branch"}, {Type: "cwd"}}},
-	{Align: "right", Segments: []Segment{{Type: "version"}}},
+// defaultConfig is applied when Config.Rows is empty: the full
+// out-of-the-box look (two-row Powerline with round end caps, solid
+// chevrons, monotonic-grey palette per row, threshold-coloured
+// percentage digits, right-aligned version stamp). Top-level
+// scalars (Margin, Width, Separator) are left to the caller's
+// Config so test fixtures that pin those values continue to work.
+var defaultConfig = Config{
+	Powerline:      true,
+	PowerlineStyle: "solid",
+	CapStyle:       "round",
+	Rows: []Row{
+		{
+			Palette: []string{"234", "235", "236", "237", "238"},
+			Caps:    true,
+			Segments: []Segment{
+				{Type: "model", FG: "33", Bold: true, Show1MFlag: true},
+				{Type: "mode"},
+				{Type: "context", FG: "245", Style: "bar+pct", ThresholdTarget: "pct", Thresholds: []Threshold{
+					{Min: 70, FG: "136"},
+					{Min: 90, FG: "160"},
+				}},
+				{Type: "limit_5h", FG: "245", ThresholdTarget: "pct", Thresholds: []Threshold{
+					{Min: 70, FG: "136"},
+					{Min: 90, FG: "160"},
+				}},
+				{Type: "limit_7d", FG: "245", ThresholdTarget: "pct", Thresholds: []Threshold{
+					{Min: 70, FG: "136"},
+					{Min: 90, FG: "160"},
+				}},
+			},
+		},
+		{
+			Palette: []string{"239", "240", "241", "242"},
+			Caps:    true,
+			Segments: []Segment{
+				{Type: "git_branch", FG: "33"},
+				{Type: "lines", FG: "245"},
+				{Type: "cwd", FG: "245"},
+				{Type: "version", FG: "245", Align: "right"},
+			},
+		},
+	},
 }
 
 const defaultSeparator = " | "
@@ -386,9 +422,11 @@ func displayWidth(s string) int {
 }
 
 // Render parses raw, walks Config.Rows, and returns the joined multi-line
-// output. An empty Config.Rows triggers defaultRows. A global JSON-parse
-// failure falls back to a hardcoded "<model> · <cwd>" so Claude Code never
-// gets an empty statusLine.
+// output. An empty Config.Rows triggers defaultConfig (rows plus
+// Powerline/PowerlineStyle/CapStyle so the out-of-the-box look matches
+// the documented default). A global JSON-parse failure falls back to a
+// hardcoded "<model> · <cwd>" so Claude Code never gets an empty
+// statusLine.
 func Render(opts Options, raw []byte) (string, error) {
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -396,11 +434,16 @@ func Render(opts Options, raw []byte) (string, error) {
 		return lastResort(opts, raw), nil
 	}
 
-	rows := opts.Config.Rows
-	if len(rows) == 0 {
-		rows = defaultRows
+	cfg := opts.Config
+	usingDefault := len(cfg.Rows) == 0
+	if usingDefault {
+		cfg.Rows = defaultConfig.Rows
+		cfg.Powerline = defaultConfig.Powerline
+		cfg.PowerlineStyle = defaultConfig.PowerlineStyle
+		cfg.CapStyle = defaultConfig.CapStyle
 	}
-	sep := opts.Config.Separator
+	rows := cfg.Rows
+	sep := cfg.Separator
 	if sep == "" {
 		sep = defaultSeparator
 	}
@@ -414,11 +457,11 @@ func Render(opts Options, raw []byte) (string, error) {
 		cwd:            cwd,
 		colorEnabled:   !opts.NoColor,
 		nowUnix:        nowFunc().Unix(),
-		powerlineStyle: opts.Config.PowerlineStyle,
-		capStyle:       opts.Config.CapStyle,
+		powerlineStyle: cfg.PowerlineStyle,
+		capStyle:       cfg.CapStyle,
 	}
-	env.ttyCols, env.ttyRows = discoverTermSize(opts.Config)
-	env.margin = opts.Config.effectiveMargin()
+	env.ttyCols, env.ttyRows = discoverTermSize(cfg)
+	env.margin = cfg.effectiveMargin()
 	env.version = opts.Version
 	// Degrade gracefully if the terminal is narrower than 2*margin
 	// — keep at least one column of usable bg-fill width.
@@ -432,7 +475,7 @@ func Render(opts Options, raw []byte) (string, error) {
 		switch {
 		case row.Align == "right":
 			line = renderRowRight(&p, row, env, sep)
-		case opts.Config.Powerline && env.colorEnabled:
+		case cfg.Powerline && env.colorEnabled:
 			line = renderRowPowerline(&p, row, env)
 		default:
 			line = renderRowNatural(&p, row, env, sep)
@@ -440,6 +483,14 @@ func Render(opts Options, raw []byte) (string, error) {
 		if line != "" {
 			lines = append(lines, line)
 		}
+	}
+	if len(lines) == 0 && usingDefault {
+		// Default layout produced nothing — e.g. `{}` payload where
+		// every default segment hides when its data is missing.
+		// Fall through to the last-resort line so the bar is never
+		// blank. A user-supplied config that intentionally renders
+		// empty stays empty.
+		return lastResort(opts, raw), nil
 	}
 	return strings.Join(lines, "\n"), nil
 }
