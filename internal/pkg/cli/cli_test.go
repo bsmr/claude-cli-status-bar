@@ -466,3 +466,170 @@ func TestRun_PassesNoColorThroughToStatusline(t *testing.T) {
 		t.Errorf("NoColor should suppress ANSI, got %q", out.String())
 	}
 }
+
+// Install: no proxy when previous statusLine was another ccsb binary.
+
+func TestInstall_PreviousCcsbBinaryDefaultsToNative(t *testing.T) {
+	e := newEnv(t)
+	// Previous statusLine points to a different path but same binary name as self.
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/old/path/ccsb-test"}}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	c := e.loadConfig(t)
+	if c.Proxy.Command != "" {
+		t.Errorf("proxy should be empty (native mode) when previous was ccsb, got %q", c.Proxy.Command)
+	}
+	// Backup must still be preserved for uninstall.
+	if len(c.Backup.PreviousStatusLine) == 0 {
+		t.Error("backup should be preserved even when proxy is skipped")
+	}
+}
+
+func TestInstall_NonCcsbPreviousStillSetsProxy(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/other-statusline"}}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	c := e.loadConfig(t)
+	if c.Proxy.Command != "/usr/local/bin/other-statusline" {
+		t.Errorf("proxy should be set for non-ccsb previous, got %q", c.Proxy.Command)
+	}
+}
+
+// Status: proxy warnings.
+
+func TestStatus_WarnsWhenProxyPointsToSelf(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: e.paths.Self}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"status"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out.String(), "WARNING") {
+		t.Errorf("expected WARNING in status output when proxy points to self, got:\n%s", out.String())
+	}
+}
+
+func TestStatus_WarnsWhenProxyHasSameBasename(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "/another/path/ccsb-test"}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"status"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out.String(), "WARNING") {
+		t.Errorf("expected WARNING for same-basename proxy, got:\n%s", out.String())
+	}
+}
+
+func TestStatus_WarnsWhenProxyNotFound(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "/nonexistent/path/other-tool"}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"status"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out.String(), "WARNING") {
+		t.Errorf("expected WARNING for missing proxy, got:\n%s", out.String())
+	}
+}
+
+// Doctor subcommand.
+
+func TestDoctor_NoIssuesFound(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if !strings.Contains(out.String(), "no issues found") {
+		t.Errorf("expected 'no issues found', got:\n%s", out.String())
+	}
+}
+
+func TestDoctor_FixesProxyPointingToSelf(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: e.paths.Self}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if c := e.loadConfig(t); c.Proxy.Command != "" {
+		t.Errorf("doctor should have cleared proxy, got %q", c.Proxy.Command)
+	}
+	if !strings.Contains(out.String(), "fixed 1 issue") {
+		t.Errorf("expected 'fixed 1 issue', got:\n%s", out.String())
+	}
+}
+
+func TestDoctor_FixesProxySameBasename(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "/other/path/ccsb-test"}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if c := e.loadConfig(t); c.Proxy.Command != "" {
+		t.Errorf("doctor should have cleared proxy, got %q", c.Proxy.Command)
+	}
+}
+
+func TestDoctor_FixesProxyNotFound(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "/nonexistent/path/other-tool"}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if c := e.loadConfig(t); c.Proxy.Command != "" {
+		t.Errorf("doctor should have cleared proxy, got %q", c.Proxy.Command)
+	}
+}
+
+func TestDoctor_InstallsWhenNotHooked(t *testing.T) {
+	e := newEnv(t)
+	// settings.json points to something else, not self.
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/some/other/tool"}}`)
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	// After doctor, settings should point to self.
+	s := e.loadSettings(t)
+	sl, ok := claudesettings.GetStatusLine(s)
+	if !ok {
+		t.Fatal("statusLine missing after doctor install")
+	}
+	var obj struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(sl, &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj.Command != e.paths.Self {
+		t.Errorf("after doctor: statusLine command = %q, want %q", obj.Command, e.paths.Self)
+	}
+}

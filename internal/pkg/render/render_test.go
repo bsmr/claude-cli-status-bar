@@ -105,7 +105,7 @@ func TestRender_DefaultLayoutAgainstSamplePayload(t *testing.T) {
 	}
 	// Strip ANSI codes for assertion (color codes may be present)
 	cleanGot := stripANSI(got)
-	if !strings.HasPrefix(cleanGot, "Opus 4.7 1M | [████░░░░░░░░░░░░] 27% 273k/1M\n") {
+	if !strings.HasPrefix(cleanGot, "Opus 4.7 1M | ●●●●◔○○○○○○○○○○○ 27% 273k/1M\n") {
 		t.Errorf("first row mismatch:\n%s", cleanGot)
 	}
 	if !strings.Contains(cleanGot, "$17.70") || !strings.Contains(cleanGot, "5h: 7%") {
@@ -469,7 +469,7 @@ func TestRender_AllTargetStillWorksAsBefore(t *testing.T) {
 	// The whole segment must be wrapped in the threshold FG, so the
 	// bar's opening bracket appears immediately after the opening
 	// escape.
-	if !strings.Contains(got, "\x1b[38;5;160m[") {
+	if !strings.Contains(got, "\x1b[38;5;160m●") {
 		t.Errorf("all-target should wrap the whole segment including the bar, got %q", got)
 	}
 	// The static FG (245) must not appear — chooseFG overrode it.
@@ -497,11 +497,10 @@ func TestDisplayWidth_EmojiIsWidth2(t *testing.T) {
 	}
 }
 
-func TestDisplayWidth_BlockBar(t *testing.T) {
-	// [████░░] = '[' + 4×U+2588 FULL BLOCK + 2×U+2591 LIGHT SHADE + ']'
-	// = 8 characters, all width 1.
-	if got := displayWidth("[████░░]"); got != 8 {
-		t.Errorf("displayWidth bar: got %d, want 8", got)
+func TestDisplayWidth_CircleBar(t *testing.T) {
+	// ●●◑○○○ = 3×U+25CF + 1×U+25D1 + 2×U+25CB = 6 chars, all width 1.
+	if got := displayWidth("●●◑○○○"); got != 6 {
+		t.Errorf("displayWidth circle bar: got %d, want 6", got)
 	}
 }
 
