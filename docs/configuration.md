@@ -104,6 +104,15 @@ enabled cap consumes 1 column from the row's usable bg-fill width.
 {"caps": true, "palette": ["234", "236", "238"], "segments": [...]}
 ```
 
+The object form also accepts an optional `align` field. With
+`"align": "right"` the entire row is rendered as plain text flush to
+the right edge of the usable width, bypassing Powerline (no row-bg,
+no chevrons) — useful for a discreet trailing line such as a version
+stamp. Any other value (including the omitted default) renders the
+row left-aligned in whatever mode the rest of the config selects.
+Per-segment right alignment within an otherwise normal row is
+documented as the [`align` common field](#common-fields).
+
 The effective background of each segment is resolved in priority
 order: explicit `Segment.bg` > `Row.palette` rotation > `Row.bg`
 (uniform fill) > built-in `defaultPalette` of three subtle dark
@@ -265,7 +274,7 @@ Unknown `cap_style` values fall back to `"round"`.
 ## Segments
 
 Every segment is an object with at least a `type` field. The renderer
-recognises 15 types.
+recognises 16 types.
 
 ### Common fields
 
@@ -278,6 +287,7 @@ segment functions, so they apply to every type:
 | `fg`    | string  | ANSI 256-color foreground as a decimal string `"0"`–`"255"`. Empty = no FG. |
 | `bg`    | string  | ANSI 256-color background as a decimal string `"0"`–`"255"`. Empty = no BG. |
 | `bold`  | bool    | When true, wraps the segment text in `ESC[1m … ESC[0m`.                     |
+| `align` | string  | `"right"` anchors this segment (and every later segment in the same row) to the right edge of the usable width. The slack between the preceding left group and the first right-aligned segment becomes padding; in Powerline mode that padding inherits the bg of the last left-aligned visible segment so the streak stays continuous. Degrades to inline (no padding) when terminal width is unknown or the row already overflows. Unknown values are treated as left (the default). Distinct from `Row.align="right"`, which forces the whole row right and bypasses Powerline. |
 
 Per-segment additional fields are documented under each type below.
 
@@ -547,6 +557,24 @@ row count. A custom format using `{rows}` therefore renders as
 {"type": "tty_size"}                            // "128×37"
 {"type": "tty_size", "format": "{cols}c"}       // "128c"
 {"type": "tty_size", "label": "term"}           // "term: 128×37"
+```
+
+#### `version`
+
+Emits the running ccsb version as `"v<x.y.z>"`. The version is
+resolved at startup with the first non-empty source winning:
+`-ldflags "-X .../cli.Version=…"` injected at build time, then
+`runtime/debug.ReadBuildInfo().Main.Version` (set by `go install`
+on a tagged module), otherwise the literal `"dev"`. A `"dev"`
+result renders as `"☠ v dev"` (U+2620 SKULL AND CROSSBONES) to
+flag untagged builds. Hidden when the resolution yields the empty
+string, so the surrounding separator or chevron is dropped.
+
+Typical placement is the last segment of the last row with
+`"align": "right"` so the stamp sits flush right:
+
+```json
+{"type": "version", "fg": "245", "align": "right"}
 ```
 
 ## Colors

@@ -180,7 +180,9 @@ func run() error {
 - `development-X.Y.Z-{main,work}` — version-tracked development. `-main` holds the base state from `main`; `-work` is the workspace.
 - `feature-<name>-{main,work}`, `fix-<name>-{main,work}`, `hotfix-<name>-{main,work}` — same `-main` / `-work` split.
 
-Current active branch: `development-0.1.0-work`.
+The active development branch tracks the current patch version
+(`git branch --show-current`); release history lives in `git log
+--first-parent main`.
 
 ### Merge rules
 
