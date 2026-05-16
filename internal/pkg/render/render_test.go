@@ -16,19 +16,23 @@ func stripANSI(s string) string {
 	return ansiRegexp.ReplaceAllString(s, "")
 }
 
-func TestRender_EmptyConfigUsesDefaultRows(t *testing.T) {
+func TestRender_EmptyConfigUsesDefaultConfig(t *testing.T) {
 	raw := []byte(`{"model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
 	got, err := Render(Options{}, raw)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	// default layout produces 3 rows (version row hidden when Version=="")
-	if n := strings.Count(got, "\n"); n < 2 {
-		t.Errorf("want >=2 newlines, got %d in %q", n, got)
+	// default layout is two rows.
+	if n := strings.Count(got, "\n"); n != 1 {
+		t.Errorf("want exactly 1 newline (2 rows), got %d in %q", n, got)
 	}
-	// model segment is now registered, so expect the display name
 	if !strings.Contains(got, "Opus 4.7") {
 		t.Errorf("want Opus 4.7 in output, got %q", got)
+	}
+	// Default config enables Powerline + round caps — first row must
+	// open with the U+E0B6 left-cap glyph in fg=234 (palette[0]).
+	if !strings.Contains(got, "\x1b[38;5;234m") {
+		t.Errorf("default config must produce Powerline left-cap, got %q", got)
 	}
 }
 
@@ -38,12 +42,11 @@ func TestRender_DefaultLayoutShowsVersionWhenSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	// 4 rows: model, cost, cwd, version
-	if n := strings.Count(got, "\n"); n < 3 {
-		t.Errorf("want >=3 newlines (4 rows), got %d in %q", n, got)
+	if n := strings.Count(got, "\n"); n != 1 {
+		t.Errorf("want exactly 1 newline (2 rows), got %d in %q", n, got)
 	}
-	if !strings.HasSuffix(got, "v0.2.7") {
-		t.Errorf("version must appear at end of last row, got %q", got)
+	if !strings.Contains(got, "v0.2.7") {
+		t.Errorf("version must appear in last row, got %q", got)
 	}
 }
 
@@ -53,8 +56,8 @@ func TestRender_DefaultLayoutDevVersionShowsSkull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if !strings.HasSuffix(got, "☠ vdev") {
-		t.Errorf("dev version must end with skull prefix, got %q", got)
+	if !strings.Contains(got, "☠ vdev") {
+		t.Errorf("dev version must render with skull prefix, got %q", got)
 	}
 }
 
@@ -115,7 +118,6 @@ func TestRender_DefaultLayoutAgainstSamplePayload(t *testing.T) {
 		"model": {"display_name": "Opus 4.7 (1M context)"},
 		"workspace": {"current_dir": "/home/u/projects/foo"},
 		"exceeds_200k_tokens": true,
-		"cost": {"total_cost_usd": 17.7024},
 		"context_window": {
 			"used_percentage": 27,
 			"context_window_size": 1000000,
@@ -126,22 +128,24 @@ func TestRender_DefaultLayoutAgainstSamplePayload(t *testing.T) {
 			"seven_day":  {"used_percentage": 30,   "resets_at": 700}
 		}
 	}`)
-	got, err := Render(Options{Cwd: "/tmp", Config: Config{Margin: intPtr(0)}}, raw)
+	got, err := Render(Options{Cwd: "/tmp", NoColor: true, Config: Config{Margin: intPtr(0)}}, raw)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	// Strip ANSI codes for assertion (color codes may be present)
-	cleanGot := stripANSI(got)
-	if !strings.HasPrefix(cleanGot, "Opus 4.7 1M | ●●●●◔○○○○○○○○○○○ 27% 273k/1M\n") {
-		t.Errorf("first row mismatch:\n%s", cleanGot)
+	// Two rows. Row 1 carries model + context + 5h + 7d; row 2
+	// carries the cwd basename. NoColor degrades Powerline to the
+	// natural separator path.
+	rows := strings.Split(got, "\n")
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows, got %d:\n%s", len(rows), got)
 	}
-	if !strings.Contains(cleanGot, "$17.70") || !strings.Contains(cleanGot, "5h: 7%") {
-		t.Errorf("second row missing cost or 5h rate:\n%s", cleanGot)
+	for _, want := range []string{"Opus 4.7 1M", "27% 273k/1M", "5h: 7%", "7d: 30%"} {
+		if !strings.Contains(rows[0], want) {
+			t.Errorf("row 1 missing %q:\n%s", want, rows[0])
+		}
 	}
-	// Third row should contain the cwd basename. git_branch may or may not
-	// fire depending on the test runner's cwd; just assert "foo" is present.
-	if !strings.Contains(got, "foo") {
-		t.Errorf("last row should include cwd basename:\n%s", got)
+	if !strings.Contains(rows[1], "foo") {
+		t.Errorf("row 2 should include cwd basename:\n%s", rows[1])
 	}
 }
 
