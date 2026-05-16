@@ -2,6 +2,7 @@ package render
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -1854,4 +1855,217 @@ func TestRenderRowPowerline_LeftCapWithoutBgSkipped(t *testing.T) {
 	}
 	env := renderEnv{colorEnabled: true}
 	_ = renderRowPowerline(&payload{}, row, env) // does not panic
+}
+
+func TestSegmentAlignRight_NaturalMode_PadsBetweenLeftAndRight(t *testing.T) {
+	// Natural mode, Width=20, Margin=0, default separator " | ".
+	// Left "L" (1 col), right "R" (1 col) → padding = 20 - 1 - 1 = 18 spaces.
+	cfg := Config{
+		Width:  20,
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "L"},
+			{Type: "text", Label: "R", Align: "right"},
+		}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := "L" + strings.Repeat(" ", 18) + "R"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestSegmentAlignRight_NaturalMode_UnknownWidthFallsBackInline(t *testing.T) {
+	// Width unset and TTY detection fails → ttyCols=0 → padding cannot
+	// be computed, so the row degrades to the standard left-joined form.
+	prevDev := devTTYWinsizeReader
+	prevStat := procStatReader
+	defer func() { devTTYWinsizeReader = prevDev; procStatReader = prevStat }()
+	devTTYWinsizeReader = func() (int, int, bool) { return 0, 0, false }
+	procStatReader = func(int) ([]byte, error) { return nil, errors.New("stub") }
+
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "L"},
+			{Type: "text", Label: "R", Align: "right"},
+		}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := "L" + defaultSeparator + "R"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestSegmentAlignRight_NaturalMode_OverflowFallsBackInline(t *testing.T) {
+	// Width=1 — left "L" + right "R" need at least 2 cols → negative
+	// slack → fall back to inline join, do not corrupt the row by
+	// inserting negative padding.
+	cfg := Config{
+		Width:  1,
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "L"},
+			{Type: "text", Label: "R", Align: "right"},
+		}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := "L" + defaultSeparator + "R"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestSegmentAlignRight_NaturalMode_FirstSegmentRightAlignedFillsLeftPadding(t *testing.T) {
+	// When the first segment is right-aligned, the entire row sits flush
+	// right — equivalent to Row.Align="right" but per-segment.
+	cfg := Config{
+		Width:  10,
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "X", Align: "right"},
+		}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := strings.Repeat(" ", 9) + "X"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestSegmentAlignRight_NaturalMode_MultipleRightAlignedStayGrouped(t *testing.T) {
+	// Once a segment carries Align="right", every subsequent segment in
+	// the same row joins the right group regardless of its own Align.
+	cfg := Config{
+		Width:  20,
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "L"},
+			{Type: "text", Label: "R1", Align: "right"},
+			{Type: "text", Label: "R2"},
+		}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// left = "L" (1), right = "R1" + sep + "R2" = "R1 | R2" (7).
+	// pad = 20 - 1 - 7 = 12.
+	want := "L" + strings.Repeat(" ", 12) + "R1" + defaultSeparator + "R2"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestSegmentAlignRight_Powerline_PaddingInheritsPrevBg(t *testing.T) {
+	// Powerline mode: the padding between left-group and right-group is
+	// filled with the bg of the last left-aligned segment so it reads as
+	// that segment extending visually. The normal chevron transition
+	// then carries left.bg → right.bg as usual.
+	cfg := Config{
+		Powerline: true,
+		Margin:    intPtr(0),
+		Width:     20,
+		Rows: []Row{{
+			Palette: []string{"237", "238"},
+			Segments: []Segment{
+				{Type: "text", Label: "L"},
+				{Type: "text", Label: "R", Align: "right"},
+			},
+		}},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// usable=20, left body "L" (1), right body "R" (1), separator cost
+	// (pre-space + chevron + post-space) = 3 → padding = 20 - 1 - 1 - 3 = 15.
+	// The padding spaces must be emitted in bg=237 (left segment's bg)
+	// — search for "<bg237><15 spaces>" sequence.
+	padSeq := "\x1b[48;5;237m" + strings.Repeat(" ", 15)
+	if !strings.Contains(got, padSeq) {
+		t.Errorf("expected 15 spaces in bg=237 between L and chevron, got %q", got)
+	}
+	// The right segment's body must appear after the chevron transition.
+	if !strings.Contains(got, "R") {
+		t.Errorf("right segment body missing, got %q", got)
+	}
+	// Stripped output should be exactly: "L" + 15 spaces + " <chev> " + "R"
+	// + no trailing padding (right segment is flush right).
+	stripped := stripANSI(got)
+	want := "L" + strings.Repeat(" ", 15) + " " + powerlineThinGlyph + " " + "R"
+	if stripped != want {
+		t.Errorf("stripped\ngot  %q\nwant %q", stripped, want)
+	}
+}
+
+func TestSegmentAlignRight_Powerline_NoEndPaddingWhenRightAligned(t *testing.T) {
+	// When a right-aligned segment exists, the row's trailing padding is
+	// already consumed by the gap between left and right — there must be
+	// no additional trailing whitespace after the right segment.
+	cfg := Config{
+		Powerline: true,
+		Margin:    intPtr(0),
+		Width:     20,
+		Rows: []Row{{
+			Palette: []string{"237", "238"},
+			Segments: []Segment{
+				{Type: "text", Label: "L"},
+				{Type: "text", Label: "R", Align: "right"},
+			},
+		}},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	stripped := stripANSI(got)
+	if strings.HasSuffix(stripped, " ") {
+		t.Errorf("right-aligned row must not have trailing padding, got %q", stripped)
+	}
+	if !strings.HasSuffix(stripped, "R") {
+		t.Errorf("right-aligned row must end with right segment body, got %q", stripped)
+	}
+}
+
+func TestSegmentAlignRight_Powerline_OverflowFallsBackInline(t *testing.T) {
+	// When content + chevron cost exceeds usable cols, padding would be
+	// negative — the row falls back to inline rendering (no padding, no
+	// truncation) so the user can still see all segments.
+	cfg := Config{
+		Powerline: true,
+		Margin:    intPtr(0),
+		Width:     5,
+		Rows: []Row{{
+			Palette: []string{"237", "238"},
+			Segments: []Segment{
+				{Type: "text", Label: "LLL"},
+				{Type: "text", Label: "RRR", Align: "right"},
+			},
+		}},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	stripped := stripANSI(got)
+	// No extra padding inserted between the segments — just the
+	// standard chevron transition.
+	want := "LLL" + " " + powerlineThinGlyph + " " + "RRR"
+	if stripped != want {
+		t.Errorf("stripped\ngot  %q\nwant %q", stripped, want)
+	}
 }
