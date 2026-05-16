@@ -6,13 +6,14 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** active development — `0.2.9`. Proxy mode, capture, hook
-> management, a configurable Powerline-aware native renderer, terminal-size
-> detection, row- and per-segment right-alignment, and a `ccsb mode`
-> subcommand to switch between proxy and native rendering are all
-> functional. `ccsb install` defaults to native mode when the previous
-> `statusLine` was the canonical `npx -y ccstatusline@latest`; otherwise
-> it seeds proxy mode so the prior renderer keeps working.
+> **Status:** active development — `0.2.11`. Proxy mode, capture, hook
+> management, a configurable Powerline-aware native renderer with a
+> full out-of-the-box default layout, terminal-size detection, row- and
+> per-segment right-alignment, and a `ccsb mode` subcommand to switch
+> between proxy and native rendering are all functional. `ccsb install`
+> defaults to native mode when the previous `statusLine` was the
+> canonical `npx -y ccstatusline@latest`; otherwise it seeds proxy mode
+> so the prior renderer keeps working.
 
 ## What it does
 
@@ -22,9 +23,11 @@ self-contained renderer that drops the `npx` / Node round-trip on every update.
   directly from the JSON payload. Rows and segments (`model`, `context`,
   `cost`, `duration`, `lines`, `cwd`, `git_branch`, `limit_5h`, `limit_7d`,
   `mode`, `effort`, `session_name`, `output_style`, `tty_size`, `version`,
-  `text`) are configurable; the default layout shows model + context bar,
-  cost + rate-limit countdowns, git branch + working directory, and a
-  right-aligned version row.
+  `text`) are configurable. The default layout (used when no config file
+  exists) is two-row Powerline with round end caps: row 1 carries model +
+  mode glyph + context bar + 5h/7d rate limits, row 2 carries git branch +
+  lines diff + cwd and a right-aligned version stamp. Percentage segments
+  escalate fg at 70 % (amber) and 90 % (red).
 - **Mode switching** — `ccsb mode native` clears the proxy block in ccsb's
   config so the native renderer takes over; `ccsb mode proxy` reinstates it
   (defaulting to `npx -y ccstatusline@latest` or a given command and args).
@@ -97,8 +100,9 @@ section and the full segment vocabulary are documented in
   configurable native renderer, and the `ccsb mode` subcommand.
 - **0.2.x** — Powerline rendering with row-bg fill, chevron transitions,
   opt-in end caps, terminal-size detection, version segment with
-  auto-detect via `runtime/debug.ReadBuildInfo()`, and right-alignment
-  at both row and per-segment level.
+  auto-detect via `runtime/debug.ReadBuildInfo()`, right-alignment at
+  both row and per-segment level, and a full Powerline default layout
+  that ships out of the box when no config file exists.
 - **Next** — `max_width` truncation and `min_cols` conditional include
   for narrower terminals. Otherwise the 0.2.x surface is stable.
 

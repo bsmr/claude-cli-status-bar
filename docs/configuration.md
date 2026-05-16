@@ -46,19 +46,23 @@ renderer with the default layout.
 | `powerline_style` | string    | `"thin"`      | Chevron glyph in Powerline mode. `"thin"` (default) renders U+E0B1; `"solid"` renders U+E0B0 as a filled wedge. Unknown values silently fall back to `"thin"`. |
 | `cap_style` | string | `"round"` | End-cap glyph style applied when a row's `caps` is true. `"round"` (default) renders U+E0B6 / U+E0B4 half-circles; `"square"` extends the bg with a 1-col plain space on each side; `"slant"` renders U+E0BC / U+E0BA filled triangles. Unknown values fall back to `"round"`. |
 
-When `rows` is omitted or empty, the renderer uses the built-in default:
+When `rows` is omitted or empty, the renderer uses the built-in
+default. The default is the full Powerline layout — two rows with
+round end caps, a solid chevron, a monotonic grey palette per row,
+threshold-coloured percentages, and a right-aligned version stamp.
+`powerline`, `powerline_style`, and `cap_style` are also filled in
+from the default when (and only when) `rows` is empty, so the
+out-of-the-box look does not depend on a config file. See
+[Default layout](#default-layout) for the exact equivalent JSON.
 
-```json
-[
-  [{"type": "model", "show_1m_flag": true}, {"type": "context", "style": "bar+pct"}],
-  [{"type": "cost"}, {"type": "limit_5h"}, {"type": "limit_7d"}],
-  [{"type": "git_branch"}, {"type": "cwd"}]
-]
-```
-
-A row whose segments all render to empty strings is omitted from the output;
-the next row moves up. Empty segments inside a row are dropped before
-joining, so adjacent separators are never doubled.
+A row whose segments all render to empty strings is omitted from the
+output; the next row moves up. Empty segments inside a row are dropped
+before joining, so adjacent separators are never doubled. When the
+default layout produces no segments at all (e.g. a `{}` payload), the
+renderer falls through to the [last-resort fallback](#last-resort-fallback)
+so the bar is never blank. A user-supplied `rows` that intentionally
+renders empty stays empty — the fallback is reserved for the default
+layout.
 
 ### Row shape
 
@@ -598,26 +602,53 @@ attribute set never emit escapes, including the trailing reset.
 
 ### Default layout
 
-Equivalent to omitting `render` entirely:
+Equivalent to omitting `render` entirely (`ccsb` fills these values
+in from the built-in `defaultConfig` when `rows` is absent):
 
 ```json
 {
   "render": {
+    "powerline": true,
+    "powerline_style": "solid",
+    "cap_style": "round",
     "rows": [
-      [{"type": "model", "show_1m_flag": true}, {"type": "context", "style": "bar+pct"}],
-      [{"type": "cost"}, {"type": "limit_5h"}, {"type": "limit_7d"}],
-      [{"type": "git_branch"}, {"type": "cwd"}]
+      {
+        "caps": true,
+        "palette": ["234", "235", "236", "237", "238"],
+        "segments": [
+          {"type": "model", "fg": "33", "bold": true, "show_1m_flag": true},
+          {"type": "mode"},
+          {"type": "context", "fg": "245", "style": "bar+pct",
+           "threshold_target": "pct",
+           "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
+          {"type": "limit_5h", "fg": "245",
+           "threshold_target": "pct",
+           "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
+          {"type": "limit_7d", "fg": "245",
+           "threshold_target": "pct",
+           "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]}
+        ]
+      },
+      {
+        "caps": true,
+        "palette": ["239", "240", "241", "242"],
+        "segments": [
+          {"type": "git_branch", "fg": "33"},
+          {"type": "lines", "fg": "245"},
+          {"type": "cwd", "fg": "245"},
+          {"type": "version", "fg": "245", "align": "right"}
+        ]
+      }
     ]
   }
 }
 ```
 
-Output:
+Output (ANSI stripped):
 
 ```
-Opus 4.7 1M | [████░░░░░░░░░░░░] 26% 264k/1M
-$26.05 | 5h: 18% (2h15m) | 7d: 65% (4d1h)
-main | claude-cli-status-bar
+  Opus 4.7 1M  🧠  ●●●◑○○○○○○○○○○○○ 22% 217k/1M  5h: 5% · 4h25m  7d: 5% · 6d2h
+  main  +546 −107  claude-cli-status-bar                                                                          v0.2.11
 ```
 
 ### Single-line, compact
