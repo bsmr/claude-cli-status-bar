@@ -99,6 +99,30 @@ func TestSave_RejectsEmptyDir(t *testing.T) {
 	}
 }
 
+func TestSave_FilePermsAreUserPrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "captures")
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	path, err := capture.Save(dir, "s", []byte(`{}`), now)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat file: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("file perm = %#o, want 0o600", perm)
+	}
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat dir: %v", err)
+	}
+	if perm := di.Mode().Perm(); perm != 0o700 {
+		t.Errorf("dir perm = %#o, want 0o700", perm)
+	}
+}
+
 func TestSave_FileContentMatchesExactBytes(t *testing.T) {
 	dir := t.TempDir()
 	payload := []byte("\x00\x01raw bytes\n{\"x\":1}\n")

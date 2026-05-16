@@ -318,16 +318,16 @@ const (
 	// columns: one space, the chevron glyph, one space.
 	powerlineSeparatorWidth = powerlineChevronWidth + 2
 
-	// Style identifiers for Config.PowerlineStyle.
-	powerlineStyleThin  = "thin"
+	// Style identifier for Config.PowerlineStyle. "thin" / "" /
+	// unknown fall through to the default glyph in pickGlyph.
 	powerlineStyleSolid = "solid"
 
 	// Glyphs used by pickGlyph based on the style identifier.
 	powerlineThinGlyph  = "" // U+E0B1 RIGHT TRIANGLE LINE
 	powerlineSolidGlyph = "" // U+E0B0 RIGHT TRIANGLE FILL
 
-	// Cap-style identifiers for Config.CapStyle.
-	capStyleRound  = "round"
+	// Cap-style identifiers for Config.CapStyle. "round" / "" /
+	// unknown fall through to the round cap pair in pickCapGlyphs.
 	capStyleSquare = "square"
 	capStyleSlant  = "slant"
 
@@ -430,8 +430,10 @@ func displayWidth(s string) int {
 func Render(opts Options, raw []byte) (string, error) {
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		// last-resort single-line so the bar is never blank.
-		return lastResort(opts, raw), nil
+		// last-resort single-line so the bar is never blank. Pass a
+		// nil payload because the parse just failed; lastResort
+		// falls through to a relaxed second-pass parse of raw.
+		return lastResort(opts, nil, raw), nil
 	}
 
 	cfg := opts.Config
@@ -490,7 +492,7 @@ func Render(opts Options, raw []byte) (string, error) {
 		// Fall through to the last-resort line so the bar is never
 		// blank. A user-supplied config that intentionally renders
 		// empty stays empty.
-		return lastResort(opts, raw), nil
+		return lastResort(opts, &p, raw), nil
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -588,10 +590,7 @@ func renderRowRight(p *payload, row Row, env renderEnv, sep string) string {
 		return prefix + content
 	}
 	usable := env.ttyCols - 2*env.margin
-	pad := usable - displayWidth(content)
-	if pad < 0 {
-		pad = 0
-	}
+	pad := max(usable-displayWidth(content), 0)
 	return prefix + strings.Repeat(" ", pad) + content
 }
 
@@ -764,10 +763,7 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 			used += displayWidth(seg.body)
 		}
 		used += (len(visible) - 1) * powerlineSeparatorWidth
-		rightAlignGap = usableCols - used
-		if rightAlignGap < 0 {
-			rightAlignGap = 0
-		}
+		rightAlignGap = max(usableCols-used, 0)
 	}
 
 	// 2.6. Left cap: glyph in fg=first.bg on default bg, or a 1-col
@@ -934,20 +930,30 @@ func wrapPct(pctText string, s Segment, p *payload, colorEnabled bool) string {
 	return openInner + pctText + closeInner
 }
 
-// lastResort renders a single line from whatever fields we can salvage when
-// the payload is unparsable.
-func lastResort(opts Options, raw []byte) string {
-	// Try a relaxed second pass: pick model and cwd if they happen to be
-	// present as flat strings somewhere. If not, fall back to a literal.
-	var loose struct {
-		Model     modelF    `json:"model"`
-		Workspace workspace `json:"workspace"`
-	}
-	_ = json.Unmarshal(raw, &loose)
-	model := loose.Model.DisplayName
-	cwd := opts.Cwd
-	if cwd == "" {
+// lastResort renders a single line from whatever fields we can salvage.
+// Called in two situations:
+//
+//   - Initial json.Unmarshal of raw failed. p is nil; we run a relaxed
+//     second-pass parse against raw to pick up flat strings.
+//   - Render produced no segments against the default layout (e.g. `{}`
+//     payload). p is the already-parsed payload from the main pass, so
+//     we reuse its fields instead of unmarshaling raw a second time.
+func lastResort(opts Options, p *payload, raw []byte) string {
+	var model, cwd string
+	if p != nil {
+		model = p.Model.DisplayName
+		cwd = p.Workspace.CurrentDir
+	} else {
+		var loose struct {
+			Model     modelF    `json:"model"`
+			Workspace workspace `json:"workspace"`
+		}
+		_ = json.Unmarshal(raw, &loose)
+		model = loose.Model.DisplayName
 		cwd = loose.Workspace.CurrentDir
+	}
+	if opts.Cwd != "" {
+		cwd = opts.Cwd
 	}
 	switch {
 	case model != "" && cwd != "":

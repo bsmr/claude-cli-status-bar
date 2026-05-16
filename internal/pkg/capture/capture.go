@@ -75,11 +75,14 @@ func basename(sessionID string, now time.Time) string {
 }
 
 // writeFile writes data atomically to dir/name and returns the absolute path.
+// The parent directory is created 0o700 and the file lands as 0o600 — captures
+// contain session_id, cwd, and (post-render) the rendered statusLine bytes
+// which can include cost figures, so they are treated as user-private state.
 func writeFile(dir, name string, data []byte) (string, error) {
 	if dir == "" {
 		return "", errors.New("capture: empty dir")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("capture: mkdir %s: %w", dir, err)
 	}
 	final := filepath.Join(dir, name)
@@ -90,6 +93,11 @@ func writeFile(dir, name string, data []byte) (string, error) {
 	}
 	tmpPath := tmp.Name()
 
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("capture: chmod: %w", err)
+	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -454,4 +455,30 @@ func TestRun_DefaultRenderUsedWhenNoConfigAndNoProxy(t *testing.T) {
 	if !strings.Contains(out.String(), "\n") {
 		t.Errorf("default layout should be multi-line, got %q", out.String())
 	}
+}
+
+func TestRun_StdinIsCapped(t *testing.T) {
+	// A pathological producer that streams forever would otherwise pin
+	// ccsb in io.ReadAll. The 10 MiB LimitReader returns short-read EOF
+	// and Run continues to render whatever was already buffered.
+	ctx := context.Background()
+	in := io.LimitReader(neverEndingReader{b: 'A'}, 64<<20) // 64 MiB upstream
+	var out bytes.Buffer
+	if err := statusline.Run(ctx, statusline.Options{NoColor: true}, in, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Output is the last-resort fallback: the payload is not valid JSON,
+	// so render emits the placeholder line.
+	if out.Len() == 0 {
+		t.Error("expected fallback output, got empty")
+	}
+}
+
+type neverEndingReader struct{ b byte }
+
+func (r neverEndingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.b
+	}
+	return len(p), nil
 }

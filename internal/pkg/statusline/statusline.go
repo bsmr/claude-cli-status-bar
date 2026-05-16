@@ -61,6 +61,11 @@ type workspace struct {
 	ProjectDir string `json:"project_dir"`
 }
 
+// maxStdinBytes caps the JSON payload we are willing to read from Claude
+// Code. Real payloads are a few kilobytes; the cap is defense-in-depth
+// against a buggy or malicious parent that pipes an unbounded stream.
+const maxStdinBytes = 10 << 20 // 10 MiB
+
 // Run reads stdin to completion, optionally captures input and rendered
 // output, then either runs the configured proxy or renders the built-in
 // fallback.
@@ -69,7 +74,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		return err
 	}
 
-	raw, err := io.ReadAll(stdin)
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxStdinBytes))
 	if err != nil {
 		return fmt.Errorf("read stdin: %w", err)
 	}
