@@ -429,6 +429,25 @@ func TestRun_UnknownSubcommandErrorIsTyped(t *testing.T) {
 	}
 }
 
+// Version subcommand.
+
+func TestRun_VersionPrintsVersion(t *testing.T) {
+	e := newEnv(t)
+	prev := cli.Version
+	cli.Version = "1.2.3-test"
+	t.Cleanup(func() { cli.Version = prev })
+
+	for _, arg := range []string{"version", "-v", "--version"} {
+		var out, errOut bytes.Buffer
+		if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{arg}, nil, &out, &errOut); err != nil {
+			t.Fatalf("Run(%s): %v", arg, err)
+		}
+		if got := strings.TrimRight(out.String(), "\n"); got != "ccsb version 1.2.3-test" {
+			t.Errorf("Run(%s): got %q", arg, got)
+		}
+	}
+}
+
 func TestRun_PassesNoColorThroughToStatusline(t *testing.T) {
 	e := newEnv(t)
 	e.saveConfig(t, config.Config{

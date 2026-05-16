@@ -30,7 +30,8 @@ The capture path exists primarily to inspect what Claude Code actually sends, so
 ## Build & Test Commands
 
 ```bash
-go build -o bin/ccsb ./cmd/ccsb        # build (output MUST go to bin/)
+go build -o bin/ccsb ./cmd/ccsb        # build (output MUST go to bin/; version defaults to "dev")
+go build -o bin/ccsb -ldflags "-X go.muehmer.eu/claude-cli-status-bar/internal/pkg/cli.Version=X.Y.Z" ./cmd/ccsb  # versioned build
 go test ./...                           # all tests
 go test -race -cover ./...              # with race detector and coverage
 go vet ./...                            # static checks

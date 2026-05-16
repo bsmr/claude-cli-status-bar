@@ -63,7 +63,7 @@ type UnknownSubcommandError struct {
 }
 
 func (e *UnknownSubcommandError) Error() string {
-	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, help)", e.Name)
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, version, help)", e.Name)
 }
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
@@ -75,6 +75,9 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 	switch args[0] {
 	case "-h", "--help", "help":
 		printHelp(stdout)
+		return nil
+	case "-v", "--version", "version":
+		fmt.Fprintf(stdout, "ccsb version %s\n", Version)
 		return nil
 	case "install":
 		return runInstall(p, stdout)
@@ -242,6 +245,7 @@ Subcommands:
               argument. With "native", clear the proxy block; with "proxy",
               set it to "npx -y ccstatusline@latest" by default or to the
               given command and arguments.
+  version     Print the ccsb version. Aliases: -v, --version.
   help        Print this message.
 `
 	fmt.Fprint(w, help)
