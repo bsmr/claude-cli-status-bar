@@ -41,6 +41,9 @@ type Options struct {
 	// NoColor disables ANSI emission in the native renderer. Caller resolves
 	// it from the NO_COLOR environment variable.
 	NoColor bool
+	// Version is forwarded to the render package for the "version" segment
+	// type. Empty string suppresses the segment.
+	Version string
 }
 
 type payload struct {
@@ -108,6 +111,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 			Config:  opts.Render,
 			Cwd:     cwd,
 			NoColor: opts.NoColor,
+			Version: opts.Version,
 		}, raw)
 		if rerr != nil {
 			runErr = fmt.Errorf("render: %w", rerr)

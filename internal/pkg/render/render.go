@@ -90,6 +90,11 @@ type Row struct {
 	// enabled cap consumes 1 column from the row's usable bg-fill
 	// width.
 	Caps bool `json:"caps,omitempty"`
+	// Align, when "right", renders segments flush to the right edge of
+	// the terminal (margin respected). Powerline is bypassed for this
+	// row so it renders as plain text regardless of Config.Powerline.
+	// Unknown values are treated as left-aligned (the default).
+	Align string `json:"align,omitempty"`
 }
 
 // UnmarshalJSON accepts two shapes:
@@ -171,6 +176,9 @@ type Threshold struct {
 // Options configures a single Render call.
 type Options struct {
 	Config Config
+	// Version is the running ccsb version string, forwarded to the
+	// "version" segment type. Empty string hides the segment.
+	Version string
 	// Cwd, when non-empty, overrides payload.workspace.current_dir as the
 	// starting directory for git-state lookup.
 	Cwd string
@@ -399,6 +407,7 @@ func Render(opts Options, raw []byte) (string, error) {
 	}
 	env.ttyCols, env.ttyRows = discoverTermSize(opts.Config)
 	env.margin = opts.Config.effectiveMargin()
+	env.version = opts.Version
 	// Degrade gracefully if the terminal is narrower than 2*margin
 	// — keep at least one column of usable bg-fill width.
 	if env.ttyCols > 0 && env.ttyCols <= 2*env.margin {
@@ -408,9 +417,12 @@ func Render(opts Options, raw []byte) (string, error) {
 	var lines []string
 	for _, row := range rows {
 		var line string
-		if opts.Config.Powerline && env.colorEnabled {
+		switch {
+		case row.Align == "right":
+			line = renderRowRight(&p, row, env, sep)
+		case opts.Config.Powerline && env.colorEnabled:
 			line = renderRowPowerline(&p, row, env)
-		} else {
+		default:
 			line = renderRowNatural(&p, row, env, sep)
 		}
 		if line != "" {
@@ -443,6 +455,35 @@ func renderRowNatural(p *payload, row Row, env renderEnv, sep string) string {
 	return joined
 }
 
+// renderRowRight renders segments as plain text, right-justified within the
+// usable terminal width (ttyCols - 2*margin). When ttyCols is unknown (0)
+// it degrades to margin + content. Powerline is intentionally bypassed so
+// right-aligned rows always render as neutral plain text.
+func renderRowRight(p *payload, row Row, env renderEnv, sep string) string {
+	var parts []string
+	for _, seg := range row.Segments {
+		s := renderSegment(p, seg, env)
+		if s == "" {
+			continue
+		}
+		parts = append(parts, s)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	content := strings.Join(parts, sep)
+	prefix := strings.Repeat(" ", env.margin)
+	if env.ttyCols <= 0 {
+		return prefix + content
+	}
+	usable := env.ttyCols - 2*env.margin
+	pad := usable - displayWidth(content)
+	if pad < 0 {
+		pad = 0
+	}
+	return prefix + strings.Repeat(" ", pad) + content
+}
+
 // renderEnv carries per-call state from Render to each segment renderer.
 // Segment functions read these fields but never mutate them.
 type renderEnv struct {
@@ -454,6 +495,7 @@ type renderEnv struct {
 	margin         int    // plain leading spaces per row; usable bg-fill width = ttyCols - 2*margin
 	powerlineStyle string // "thin" (default) | "solid"; used by renderRowPowerline via pickGlyph
 	capStyle       string // "" / "round" / "square" / "slant"; "" → round
+	version        string // ccsb version forwarded from Options.Version
 }
 
 // renderSegment dispatches one segment via the registry. Unknown types

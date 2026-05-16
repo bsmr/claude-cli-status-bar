@@ -38,6 +38,7 @@ func init() {
 	segmentFuncs["mode"] = renderMode
 	segmentFuncs["git_branch"] = renderGitBranch
 	segmentFuncs["tty_size"] = renderTTYSize
+	segmentFuncs["version"] = renderVersion
 }
 
 // renderText returns the segment's Label verbatim. Useful as a literal
@@ -250,9 +251,9 @@ func renderLimit7d(p *payload, s Segment, env renderEnv) string {
 // the static FG.
 //
 // Style values:
-//   - "" or "pct" (default): "<label>: <pct> (<countdown>)"
-//   - "bar":                 "<label>: [bar]"
-//   - "bar+pct":             "<label>: [bar] <pct> (<countdown>)"
+//   - "" or "pct" (default): "<label>: <pct> · <countdown>"
+//   - "bar":                 "<label>: <bar>"
+//   - "bar+pct":             "<label>: <bar> <pct> · <countdown>"
 func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLabel string) string {
 	if rl.UsedPercentage == 0 && rl.ResetsAt == 0 {
 		return ""
@@ -270,12 +271,12 @@ func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLab
 		if rl.ResetsAt == 0 {
 			return fmt.Sprintf("%s: %s %s", label, makeBar(rl.UsedPercentage, barCells), pct)
 		}
-		return fmt.Sprintf("%s: %s %s (%s)", label, makeBar(rl.UsedPercentage, barCells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return fmt.Sprintf("%s: %s %s · %s", label, makeBar(rl.UsedPercentage, barCells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
 	default: // "" or "pct"
 		if rl.ResetsAt == 0 {
 			return fmt.Sprintf("%s: %s", label, pct)
 		}
-		return fmt.Sprintf("%s: %s (%s)", label, pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return fmt.Sprintf("%s: %s · %s", label, pct, formatCountdown(rl.ResetsAt-env.nowUnix))
 	}
 }
 
@@ -366,4 +367,17 @@ func renderTTYSize(_ *payload, s Segment, env renderEnv) string {
 		out = s.Label + ": " + out
 	}
 	return out
+}
+
+// renderVersion emits the ccsb version string from env.version.
+// Hidden when env.version is empty. Dev builds (version == "dev") are
+// prefixed with ☠ (U+2620 SKULL AND CROSSBONES) as a visual warning.
+func renderVersion(_ *payload, _ Segment, env renderEnv) string {
+	if env.version == "" {
+		return ""
+	}
+	if env.version == "dev" {
+		return "☠ v" + env.version // ☠ v dev
+	}
+	return "v" + env.version
 }

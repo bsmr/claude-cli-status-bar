@@ -210,8 +210,8 @@ func TestRenderLimit5h_PercentAndCountdown(t *testing.T) {
 
 	env := renderEnv{nowUnix: 1_778_412_000 - (4*3600 + 23*60)}
 	got := renderLimit5h(p, Segment{}, env)
-	if got != "5h: 7% (4h23m)" {
-		t.Errorf("got %q, want 5h: 7%% (4h23m)", got)
+	if got != "5h: 7% · 4h23m" {
+		t.Errorf("got %q, want 5h: 7%% · 4h23m", got)
 	}
 }
 
@@ -220,8 +220,8 @@ func TestRenderLimit5h_LabelOverride(t *testing.T) {
 	p.Limits.FiveHour.UsedPercentage = 50
 	p.Limits.FiveHour.ResetsAt = 100
 	env := renderEnv{nowUnix: 100 - 60} // 1m
-	if got := renderLimit5h(p, Segment{Label: "WIN"}, env); got != "WIN: 50% (1m)" {
-		t.Errorf("got %q, want WIN: 50%% (1m)", got)
+	if got := renderLimit5h(p, Segment{Label: "WIN"}, env); got != "WIN: 50% · 1m" {
+		t.Errorf("got %q, want WIN: 50%% · 1m", got)
 	}
 }
 
@@ -236,8 +236,8 @@ func TestRenderLimit7d_DaysAndHours(t *testing.T) {
 	p.Limits.SevenDay.UsedPercentage = 30
 	p.Limits.SevenDay.ResetsAt = 1_000_000
 	env := renderEnv{nowUnix: 1_000_000 - (5*86400 + 2*3600)} // 5d2h
-	if got := renderLimit7d(p, Segment{}, env); got != "7d: 30% (5d2h)" {
-		t.Errorf("got %q, want 7d: 30%% (5d2h)", got)
+	if got := renderLimit7d(p, Segment{}, env); got != "7d: 30% · 5d2h" {
+		t.Errorf("got %q, want 7d: 30%% · 5d2h", got)
 	}
 }
 
@@ -246,8 +246,8 @@ func TestRenderLimit_NegativeRemainingShowsNow(t *testing.T) {
 	p.Limits.FiveHour.UsedPercentage = 10
 	p.Limits.FiveHour.ResetsAt = 100
 	env := renderEnv{nowUnix: 200} // already past
-	if got := renderLimit5h(p, Segment{}, env); got != "5h: 10% (now)" {
-		t.Errorf("got %q, want 5h: 10%% (now)", got)
+	if got := renderLimit5h(p, Segment{}, env); got != "5h: 10% · now" {
+		t.Errorf("got %q, want 5h: 10%% · now", got)
 	}
 }
 
@@ -269,7 +269,7 @@ func TestRenderLimit5h_BarPctStyleIncludesCountdown(t *testing.T) {
 	p.Limits.FiveHour.ResetsAt = 500 + 60
 	env := renderEnv{nowUnix: 500}
 	got := renderLimit5h(p, Segment{Style: "bar+pct"}, env)
-	want := "5h: ●●●●●●●●○○○○○○○○ 50% (1m)"
+	want := "5h: ●●●●●●●●○○○○○○○○ 50% · 1m"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -413,6 +413,26 @@ func TestRenderTTYSize_LabelDoesNotPreventHide(t *testing.T) {
 	got := renderTTYSize(&payload{}, Segment{Type: "tty_size", Label: "term"}, env)
 	if got != "" {
 		t.Errorf("got %q, want \"\" (hide must precede label prefix)", got)
+	}
+}
+
+func TestRenderVersion_EmptyHidesSegment(t *testing.T) {
+	if got := renderVersion(&payload{}, Segment{}, renderEnv{}); got != "" {
+		t.Errorf("empty version should hide segment, got %q", got)
+	}
+}
+
+func TestRenderVersion_ReleaseVersionPrefixesV(t *testing.T) {
+	env := renderEnv{version: "0.2.6"}
+	if got := renderVersion(&payload{}, Segment{}, env); got != "v0.2.6" {
+		t.Errorf("got %q, want v0.2.6", got)
+	}
+}
+
+func TestRenderVersion_DevVersionAddsSkullPrefix(t *testing.T) {
+	env := renderEnv{version: "dev"}
+	if got := renderVersion(&payload{}, Segment{}, env); got != "☠ vdev" {
+		t.Errorf("got %q, want ☠ vdev", got)
 	}
 }
 
