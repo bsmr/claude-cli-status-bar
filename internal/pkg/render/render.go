@@ -150,6 +150,13 @@ type Segment struct {
 	Show1MFlag bool   `json:"show_1m_flag,omitempty"` // type=model
 	Style      string `json:"style,omitempty"`        // type=context|limit_5h|limit_7d
 
+	// BarWidth overrides the circle-bar length (in cells) for segments
+	// that draw a bar: context, limit_5h, limit_7d. Each cell has five
+	// quarter-fill states. Zero or negative falls back to the package
+	// default (barCells = 16). Lets compact bars sit on limit_5h /
+	// limit_7d while context keeps the wider default.
+	BarWidth int `json:"bar_width,omitempty"` // type=context|limit_5h|limit_7d
+
 	// Thresholds let percentage-bearing segments (context, limit_5h,
 	// limit_7d) override FG based on the current used-percentage. The
 	// highest matching Min wins; thresholds with empty FG are skipped;

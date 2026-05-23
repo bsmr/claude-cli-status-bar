@@ -151,6 +151,17 @@ func renderLines(p *payload, _ Segment, _ renderEnv) string {
 
 const barCells = 16
 
+// effectiveBarCells returns the circle-bar length for a segment:
+// Segment.BarWidth when positive, otherwise the package default
+// barCells. Zero or negative values fall back to the default so a
+// missing or nonsensical config cannot collapse the bar to nothing.
+func effectiveBarCells(s Segment) int {
+	if s.BarWidth > 0 {
+		return s.BarWidth
+	}
+	return barCells
+}
+
 // renderContext draws the context-window state. Style "bar+pct" (default)
 // emits the unicode block bar, the rounded percent, and used/total token
 // counts. "bar" or "pct" omit the other parts. Hidden when both
@@ -168,7 +179,7 @@ func renderContext(p *payload, s Segment, env renderEnv) string {
 	pct := int(p.Context.UsedPercentage + 0.5) // round
 	pctText := fmt.Sprintf("%d%%", pct)
 	pctStyled := wrapPct(pctText, s, p, env.colorEnabled)
-	bar := makeBar(p.Context.UsedPercentage, barCells)
+	bar := makeBar(p.Context.UsedPercentage, effectiveBarCells(s))
 	switch style {
 	case "bar":
 		return bar
@@ -263,15 +274,16 @@ func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLab
 		label = defaultLabel
 	}
 	pct := wrapPct(formatPct(rl.UsedPercentage), s, p, env.colorEnabled)
+	cells := effectiveBarCells(s)
 
 	switch s.Style {
 	case "bar":
-		return fmt.Sprintf("%s: %s", label, makeBar(rl.UsedPercentage, barCells))
+		return fmt.Sprintf("%s: %s", label, makeBar(rl.UsedPercentage, cells))
 	case "bar+pct":
 		if rl.ResetsAt == 0 {
-			return fmt.Sprintf("%s: %s %s", label, makeBar(rl.UsedPercentage, barCells), pct)
+			return fmt.Sprintf("%s: %s %s", label, makeBar(rl.UsedPercentage, cells), pct)
 		}
-		return fmt.Sprintf("%s: %s %s · %s", label, makeBar(rl.UsedPercentage, barCells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return fmt.Sprintf("%s: %s %s · %s", label, makeBar(rl.UsedPercentage, cells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
 	default: // "" or "pct"
 		if rl.ResetsAt == 0 {
 			return fmt.Sprintf("%s: %s", label, pct)
