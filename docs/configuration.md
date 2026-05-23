@@ -303,6 +303,7 @@ Per-segment additional fields are documented under each type below.
 | `format`        | `cwd`, `cost`                        | Per-type format string or shape selector.            |
 | `show_1m_flag`  | `model`                              | Appends `" 1M"` when the payload's `exceeds_200k_tokens` is true. |
 | `style`         | `context`, `limit_5h`, `limit_7d`    | Selects between presentation variants.               |
+| `bar_width`     | `context`, `limit_5h`, `limit_7d`    | Circle-bar length in cells. Default `16`; zero or negative falls back to the default. See [`bar_width`](#bar_width). |
 | `thresholds`    | `context`, `limit_5h`, `limit_7d`    | Per-segment percentage-driven `fg` overrides. See [Thresholds](#thresholds). |
 | `threshold_target` | `context`, `limit_5h`, `limit_7d` | `"all"` (default) wraps the whole segment in the threshold `fg`; `"pct"` wraps only the percentage digits. See [Thresholds](#thresholds). |
 
@@ -361,6 +362,24 @@ The optional `threshold_target` field scopes the override:
 In this configuration the bar `[██░░░░░░░░░░░░░░]` stays in `245`
 (grey) regardless of fill; only the `95%` flicks to `160` (red)
 above the 90 threshold.
+
+### `bar_width`
+
+The `bar` and `bar+pct` styles draw a circle bar whose cells each have
+five quarter-fill states (`○ ◔ ◑ ◕ ●`). `bar_width` sets the cell count
+for a single segment; it applies to `context`, `limit_5h`, and
+`limit_7d`. The default is `16`; zero or negative values fall back to
+the default, so an omitted or nonsensical value never collapses the bar.
+
+A wide `context` bar plus full-width `limit_5h` / `limit_7d` bars can
+overflow narrow terminals — give the rate-limit buckets a compact width
+while leaving `context` at the default:
+
+```json
+{"type": "context",  "style": "bar+pct"},
+{"type": "limit_5h", "style": "bar+pct", "bar_width": 8},
+{"type": "limit_7d", "style": "bar+pct", "bar_width": 8}
+```
 
 ### Segment reference
 
@@ -468,10 +487,11 @@ prompt size after caching).
 | `"pct"`     | `26%`                                   |
 
 Token counts are compacted: `1234` → `"1k"`, `1_500_000` → `"1.5M"`. Hidden
-when both `used_percentage` and `context_window_size` are zero. Supports
-[`thresholds`](#thresholds) (whole-segment or `threshold_target: "pct"`
-for just the percentage digits) to switch `fg` based on
-`used_percentage`.
+when both `used_percentage` and `context_window_size` are zero. The bar
+length defaults to 16 cells; override it with [`bar_width`](#bar_width).
+Supports [`thresholds`](#thresholds) (whole-segment or
+`threshold_target: "pct"` for just the percentage digits) to switch `fg`
+based on `used_percentage`.
 
 ```json
 {"type": "context", "style": "bar+pct"}
@@ -494,10 +514,11 @@ Countdown format mirrors `duration`: drop zero higher units, keep at most
 two adjacent units (`"4d1h"`, `"2h15m"`, `"45m"`). Reaches `"now"` once the
 reset time has passed. Percentages with fractional parts < 0.0005 render
 as integers (`"100%"` not `"100.0%"`). Hidden when both `used_percentage`
-and `resets_at` are zero (no data). Both segments support
-[`thresholds`](#thresholds) (whole-segment or `threshold_target: "pct"`
-for just the percentage digits) to switch `fg` based on
-`used_percentage`.
+and `resets_at` are zero (no data). The `bar` / `bar+pct` styles default
+to a 16-cell bar; override it with [`bar_width`](#bar_width). Both
+segments support [`thresholds`](#thresholds) (whole-segment or
+`threshold_target: "pct"` for just the percentage digits) to switch `fg`
+based on `used_percentage`.
 
 ```json
 {"type": "limit_5h"}

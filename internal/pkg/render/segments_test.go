@@ -287,6 +287,57 @@ func TestRenderLimit5h_BarPctWithoutResetOmitsCountdown(t *testing.T) {
 	}
 }
 
+func TestEffectiveBarCells_FallbackAndOverride(t *testing.T) {
+	for _, tc := range []struct {
+		width int
+		want  int
+	}{
+		{0, barCells},  // unset → default
+		{-3, barCells}, // negative → default
+		{8, 8},         // explicit override
+		{1, 1},         // minimum sensible value still honoured
+	} {
+		if got := effectiveBarCells(Segment{BarWidth: tc.width}); got != tc.want {
+			t.Errorf("effectiveBarCells(BarWidth=%d) = %d, want %d", tc.width, got, tc.want)
+		}
+	}
+}
+
+func TestRenderContext_BarWidthOverride(t *testing.T) {
+	p := &payload{}
+	p.Context.UsedPercentage = 27
+	p.Context.ContextWindowSize = 1_000_000
+	p.Context.TotalInputTokens = 273_000
+	// Same data as TestRenderContext_BarPlusPctDefault but at 8 cells:
+	// 27% of 8-cell bar → 27×32/100=8.64 → 9 quarters → 2 full + remainder 1 (◔).
+	got := renderContext(p, Segment{Style: "bar+pct", BarWidth: 8}, renderEnv{})
+	if got != "●●◔○○○○○ 27% 273k/1M" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRenderContext_BarWidthZeroUsesDefault(t *testing.T) {
+	p := &payload{}
+	p.Context.UsedPercentage = 27
+	withZero := renderContext(p, Segment{Style: "bar", BarWidth: 0}, renderEnv{})
+	withDefault := renderContext(p, Segment{Style: "bar"}, renderEnv{})
+	if withZero != withDefault {
+		t.Errorf("BarWidth=0 should match default: %q vs %q", withZero, withDefault)
+	}
+}
+
+func TestRenderLimit5h_BarWidthOverride(t *testing.T) {
+	p := &payload{}
+	p.Limits.FiveHour.UsedPercentage = 50 // 4/8 cells
+	p.Limits.FiveHour.ResetsAt = 1000
+	env := renderEnv{nowUnix: 500}
+	got := renderLimit5h(p, Segment{Style: "bar", BarWidth: 8}, env)
+	want := "5h: ●●●●○○○○"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestFormatCountdown_DropsTrailingZeroUnits(t *testing.T) {
 	cases := map[int64]string{
 		3601:  "1h",   // 1h + 1s -> just 1h (s is below minute granularity)
