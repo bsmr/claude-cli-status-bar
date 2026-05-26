@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // stripANSI removes ANSI escape sequences from a string.
@@ -2697,5 +2699,100 @@ func TestRender_WrapStaysInPlaceWhenRowFits(t *testing.T) {
 	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
 	if strings.Contains(got, "\n") {
 		t.Errorf("row that fits must stay one line, got %q", got)
+	}
+}
+
+// --- 0.2.23 max_width truncation -------------------------------------------
+
+func TestTruncateToWidth_ZeroOrNegativeIsNoOp(t *testing.T) {
+	for _, max := range []int{0, -1, -100} {
+		got := truncateToWidth("hello world", max)
+		if got != "hello world" {
+			t.Errorf("max=%d should be no-op, got %q", max, got)
+		}
+	}
+}
+
+func TestTruncateToWidth_ShortStringPassesThrough(t *testing.T) {
+	if got := truncateToWidth("short", 100); got != "short" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTruncateToWidth_ExactBoundaryUnchanged(t *testing.T) {
+	if got := truncateToWidth("exactlyten", 10); got != "exactlyten" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTruncateToWidth_AppendsEllipsisOnOverflow(t *testing.T) {
+	// "claude-cli-status-bar" is 21 cols; truncate to 10 → "claude-cl…"
+	got := truncateToWidth("claude-cli-status-bar", 10)
+	if got != "claude-cl…" {
+		t.Errorf("got %q, want %q", got, "claude-cl…")
+	}
+	if runewidth.StringWidth(got) != 10 {
+		t.Errorf("truncated width = %d, want 10", runewidth.StringWidth(got))
+	}
+}
+
+func TestTruncateToWidth_CJKHandledCorrectly(t *testing.T) {
+	// "你好世界" = 8 cols (4 fullwidth chars). Truncate to 5 should keep
+	// 2 chars + ellipsis (which is 1 col), total 5 cols.
+	s := "你好世界"
+	got := truncateToWidth(s, 5)
+	if w := runewidth.StringWidth(got); w > 5 {
+		t.Errorf("CJK truncation should not exceed max: %q width %d", got, w)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("CJK truncation should end with ellipsis, got %q", got)
+	}
+}
+
+func TestRender_MaxWidthTruncatesCwd(t *testing.T) {
+	raw := []byte(`{"workspace":{"current_dir":"/home/u/very/long/path/to/project-with-long-name"}}`)
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "cwd", Format: "full", MaxWidth: 12},
+		}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if runewidth.StringWidth(got) != 12 {
+		t.Errorf("rendered width = %d, want 12; got %q", runewidth.StringWidth(got), got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("truncated cwd should end with ellipsis, got %q", got)
+	}
+}
+
+func TestRender_MaxWidthIgnoredWhenShortEnough(t *testing.T) {
+	raw := []byte(`{"workspace":{"current_dir":"/short"}}`)
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "cwd", Format: "full", MaxWidth: 50},
+		}}},
+	}
+	got, _ := Render(Options{Config: cfg, NoColor: true}, raw)
+	if got != "/short" {
+		t.Errorf("short cwd must pass through unchanged, got %q", got)
+	}
+}
+
+func TestRender_MaxWidthAppliesToGitBranchToo(t *testing.T) {
+	// Use a text segment as a stand-in (git_branch needs a real .git dir).
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "feature/very-long-branch-name", MaxWidth: 10},
+		}}},
+	}
+	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if got != "feature/v…" {
+		t.Errorf("got %q, want %q", got, "feature/v…")
 	}
 }
