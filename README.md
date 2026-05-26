@@ -6,18 +6,20 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** active development — `0.2.18`. Proxy mode, capture, hook
+> **Status:** active development — `0.2.19`. Proxy mode, capture, hook
 > management, a configurable Powerline-aware native renderer with a
 > full out-of-the-box default layout (including bar-style 5h/7d
 > rate-limit segments and a hidden-by-default schema-health indicator),
 > terminal-size detection, row- and per-segment right-alignment,
 > per-segment configurable bar widths, per-segment-isolated payload
-> parsing, `ccsb mode` for proxy/native switching, `ccsb config reset`
-> for restoring defaults, and `ccsb doctor` for installation health
-> plus a schema-drift diff against the latest capture. `ccsb install`
-> defaults to native mode when the previous `statusLine` was the
-> canonical `npx -y ccstatusline@latest`; otherwise it seeds proxy
-> mode so the prior renderer keeps working.
+> parsing, an automatic schema-drift logger that writes a `.diag`
+> file next to each broken capture, `ccsb mode` for proxy/native
+> switching, `ccsb config reset` for restoring defaults, and `ccsb
+> doctor` for installation health plus a schema-drift diff against
+> the latest capture. `ccsb install` defaults to native mode when
+> the previous `statusLine` was the canonical
+> `npx -y ccstatusline@latest`; otherwise it seeds proxy mode so the
+> prior renderer keeps working.
 
 ## What it does
 

@@ -651,6 +651,14 @@ fields ccsb does not yet handle). The schema-check is purely
 informational — ccsb cannot fix the upstream payload — but surfaces
 the drift explicitly so an unexpected ☠ has a concrete root cause.
 
+Whenever the indicator fires, ccsb also persists a `.diag` file next
+to the matching capture (same basename as the `.json`/`.out`/`.err`
+siblings) containing a stable plain-text dump of the detected issue:
+the top-level parse error if any, missing critical fields, per-field
+unmarshal errors, and the list of additive keys spotted on the side.
+Healthy captures produce no `.diag` file, so the capture dir stays
+uncluttered.
+
 ## Colors
 
 Foreground and background use ANSI 256-color codes as decimal strings in
