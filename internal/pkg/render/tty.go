@@ -113,20 +113,20 @@ func discoverTermSize(cfg Config) (cols, rows int) {
 func parseProcStat(content []byte) (ppid int, ttyNr int, err error) {
 	last := bytes.LastIndexByte(content, ')')
 	if last < 0 {
-		return 0, 0, errors.New("parseProcStat: no closing paren")
+		return 0, 0, errors.New("render: parseProcStat: no closing paren")
 	}
 	fields := bytes.Fields(content[last+1:])
 	if len(fields) < 5 {
-		return 0, 0, fmt.Errorf("parseProcStat: only %d fields after comm", len(fields))
+		return 0, 0, fmt.Errorf("render: parseProcStat: only %d fields after comm", len(fields))
 	}
 	// Layout after ')': state(0) ppid(1) pgrp(2) session(3) tty_nr(4) ...
 	ppid, err = strconv.Atoi(string(fields[1]))
 	if err != nil {
-		return 0, 0, fmt.Errorf("parseProcStat: ppid: %w", err)
+		return 0, 0, fmt.Errorf("render: parseProcStat: ppid: %w", err)
 	}
 	ttyNr, err = strconv.Atoi(string(fields[4]))
 	if err != nil {
-		return 0, 0, fmt.Errorf("parseProcStat: tty_nr: %w", err)
+		return 0, 0, fmt.Errorf("render: parseProcStat: tty_nr: %w", err)
 	}
 	return ppid, ttyNr, nil
 }

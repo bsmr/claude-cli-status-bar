@@ -111,7 +111,7 @@ type Row struct {
 func (r *Row) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimLeft(data, " \t\r\n")
 	if len(trimmed) == 0 {
-		return errors.New("render.Row: empty value")
+		return errors.New("render: row: empty value")
 	}
 	if trimmed[0] == '[' {
 		var segs []Segment
@@ -125,7 +125,7 @@ func (r *Row) UnmarshalJSON(data []byte) error {
 	// Only '{' is a valid object start; anything else (null, number,
 	// string, boolean) is rejected.
 	if trimmed[0] != '{' {
-		return fmt.Errorf("render.Row: unexpected JSON token %q", string(trimmed[:1]))
+		return fmt.Errorf("render: row: unexpected JSON token %q", string(trimmed[:1]))
 	}
 	// Object shape — use an alias to bypass this UnmarshalJSON method.
 	type rowAlias Row
@@ -1160,105 +1160,40 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 	if !env.colorEnabled {
 		return ""
 	}
-
-	// 1. Render visible segments and capture each one's effective bg.
-	type renderedSeg struct {
-		body  string
-		bg    string
-		align string
-	}
-	var visible []renderedSeg
-	for _, seg := range row.Segments {
-		s := renderSegment(p, seg, env)
-		if s == "" {
-			continue
-		}
-		bg := effectiveSegmentBg(row, seg, len(visible), true)
-		visible = append(visible, renderedSeg{body: s, bg: bg, align: seg.Align})
-	}
+	visible := collectVisibleSegments(p, row, env)
 	if len(visible) == 0 {
 		return ""
 	}
 
-	glyph := pickGlyph(env.powerlineStyle)
-	var b strings.Builder
-
-	// 2. Leading margin: plain spaces with no bg, so Claude Code's
-	//    statusLine chrome shows through.
-	if env.margin > 0 {
-		b.WriteString(strings.Repeat(" ", env.margin))
-	}
-
-	// 2.5. Resolve cap presence and glyphs once per row.
 	caps := pickCapGlyphs(env.capStyle)
 	hasLeftCap := row.Caps && visible[0].bg != ""
 	hasRightCap := row.Caps && visible[len(visible)-1].bg != ""
+	splitIdx := findAlignmentSplit(visible)
+	usable, used := segmentLayoutMetrics(env, visible, hasLeftCap, hasRightCap)
 
-	// 2.7. Locate the split between left-aligned and right-aligned
-	//      groups. The first segment whose Align is "right" marks the
-	//      split — every subsequent segment joins the right group
-	//      regardless of its own Align. splitIdx == len(visible) means
-	//      no right-aligned segment exists and the trailing-padding
-	//      branch in step 4 stays active.
-	splitIdx := len(visible)
-	for i, v := range visible {
-		if v.align == "right" {
-			splitIdx = i
-			break
-		}
+	var b strings.Builder
+	if env.margin > 0 {
+		b.WriteString(strings.Repeat(" ", env.margin))
+	}
+	if hasLeftCap {
+		writeLeftCap(&b, caps, visible[0].bg)
 	}
 
-	// 2.8. Pre-compute the right-align gap: usable cols minus the
-	//      visible body widths and chevron separators. When the row
-	//      would overflow the usable width (gap <= 0), the gap is
-	//      skipped and the row degrades to inline rendering with no
-	//      padding inserted between groups.
+	// Right-align gap: usable cols minus body+chevrons. When the row
+	// would overflow (gap <= 0), the gap is skipped and the row
+	// degrades to inline rendering.
 	var rightAlignGap int
 	if env.ttyCols > 0 && splitIdx < len(visible) {
-		usableCols := env.ttyCols - 2*env.margin
-		if hasLeftCap {
-			usableCols--
-		}
-		if hasRightCap {
-			usableCols--
-		}
-		used := 0
-		for _, seg := range visible {
-			used += displayWidth(seg.body)
-		}
-		used += (len(visible) - 1) * powerlineSeparatorWidth
-		rightAlignGap = max(usableCols-used, 0)
+		rightAlignGap = max(usable-used, 0)
 	}
 
-	// 2.6. Left cap: glyph in fg=first.bg on default bg, or a 1-col
-	//      bg-painted plain space for "square" style.
-	if hasLeftCap {
-		firstBg := visible[0].bg
-		if caps.left == "" {
-			// Square: 1 col of plain first.bg-painted space.
-			b.WriteString(bg256(firstBg))
-			b.WriteString(" ")
-		} else {
-			// Round / slant: glyph in fg=firstBg on default bg.
-			// Use \x1b[49m (default-bg only) instead of full reset
-			// because the margin spaces had no styling — there's no
-			// stale fg / bold to clear here.
-			b.WriteString("\x1b[49m") // default bg
-			b.WriteString(fg256(firstBg))
-			b.WriteString(caps.left)
-			b.WriteString(reset)
-		}
-	}
-
-	// 3. Walk segments, interleaving chevrons.
+	glyph := pickGlyph(env.powerlineStyle)
 	for i, seg := range visible {
-		// 3.0. Right-align gap insertion. Inserted *before* the
-		//      chevron transition or first-segment open so the
-		//      padding renders in the previous segment's bg (Powerline
-		//      continuation) and the normal chevron then carries
-		//      prev.bg → next.bg as usual. When splitIdx == 0 there is
-		//      no previous segment to inherit a bg from — the padding
-		//      renders as plain spaces.
+		// Right-align gap inserted before the chevron at splitIdx so
+		// the padding renders in the previous segment's bg (Powerline
+		// continuation) and the chevron then carries prev.bg → next.bg
+		// as usual. At splitIdx == 0 there is no previous bg — the
+		// padding renders as plain spaces.
 		if i == splitIdx && rightAlignGap > 0 {
 			if i == 0 {
 				b.WriteString(strings.Repeat(" ", rightAlignGap))
@@ -1268,48 +1203,11 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 			}
 		}
 		if i == 0 {
-			// First segment: open its bg.
 			if seg.bg != "" {
 				b.WriteString(bg256(seg.bg))
 			}
 		} else {
-			// Chevron transition between visible[i-1] and visible[i].
-			prevBg := visible[i-1].bg
-			nextBg := seg.bg
-
-			// Per-style asymmetric chev-cell geometry:
-			//   solid (U+E0B0): chev-cell bg=next, fg=prev — the
-			//     filled wedge in prev colour visually flows into
-			//     next bg.
-			//   thin  (U+E0B1): chev-cell bg=prev, fg=next — the
-			//     line in next colour sits at the trailing edge of
-			//     prev; the bg switch happens at the post-space.
-			var chevCellBg, chevFg string
-			if env.powerlineStyle == powerlineStyleSolid {
-				chevCellBg, chevFg = nextBg, prevBg
-			} else {
-				chevCellBg, chevFg = prevBg, nextBg
-			}
-			if prevBg == nextBg {
-				// Same-bg fallback: keep the glyph visible via a
-				// static fg so legacy uniform-bg configs do not lose
-				// the separator.
-				chevFg = defaultSameBgChevronFG
-			}
-
-			// Powerline transition layout (corrects the 0.2.3 spec
-			// error where both spaces rendered in nextBg):
-			//   pre-space in prevBg (extends prev segment by 1 col),
-			//   chev-cell in (chevCellBg, chevFg),
-			//   post-space in nextBg (extends next segment by 1 col).
-			b.WriteString(bg256(prevBg))
-			b.WriteString(" ")
-			b.WriteString(bg256(chevCellBg))
-			b.WriteString(fg256(chevFg))
-			b.WriteString(glyph)
-			b.WriteString(reset)
-			b.WriteString(bg256(nextBg))
-			b.WriteString(" ")
+			b.WriteString(renderChevron(visible[i-1].bg, seg.bg, glyph, env.powerlineStyle))
 		}
 		b.WriteString(seg.body)
 		if seg.bg != "" {
@@ -1317,52 +1215,138 @@ func renderRowPowerline(p *payload, row Row, env renderEnv) string {
 		}
 	}
 
-	// 4. Pad to (ttyCols - 2*margin - 2*cap_cols) total visible cols
-	//    of bg-fill so the optional left and right caps each occupy
-	//    1 col within the usable region. Skipped when a right-aligned
-	//    segment exists — the slack was already consumed by the gap
-	//    between the left and right groups in step 3.0.
+	// Trailing pad to fill the usable region. Skipped when a
+	// right-aligned segment exists — that slack was already consumed
+	// by the gap between the left and right groups above.
 	if env.ttyCols > 0 && splitIdx == len(visible) {
-		usableCols := env.ttyCols - 2*env.margin
-		if hasLeftCap {
-			usableCols--
-		}
-		if hasRightCap {
-			usableCols--
-		}
-		used := 0
-		for _, seg := range visible {
-			used += displayWidth(seg.body)
-		}
-		used += (len(visible) - 1) * powerlineSeparatorWidth
-		if remaining := usableCols - used; remaining > 0 {
+		if remaining := usable - used; remaining > 0 {
 			b.WriteString(strings.Repeat(" ", remaining))
 		}
 	}
 
-	// 4.5. Right cap: glyph in fg=last.bg on default bg, or a 1-col
-	//      bg-painted plain space for "square" style.
 	if hasRightCap {
-		lastBg := visible[len(visible)-1].bg
-		if caps.right == "" {
-			// Square: 1 col of plain last.bg-painted space. The bg
-			// is already set to lastBg from the last segment's
-			// trailing bg-restore; padding spaces (if any) inherit
-			// it unchanged.
-			b.WriteString(" ")
-		} else {
-			// Round / slant: full reset clears any fg / bold left
-			// over from the last segment, then fg256(lastBg) + glyph
-			// paints the cap on the terminal's default bg.
-			b.WriteString(reset)
-			b.WriteString(fg256(lastBg))
-			b.WriteString(caps.right)
-		}
+		writeRightCap(&b, caps, visible[len(visible)-1].bg)
 	}
-
-	// 5. Close.
 	b.WriteString(reset)
 	return b.String()
+}
+
+// renderedSeg is one element of renderRowPowerline's working list —
+// a segment whose body rendered to non-empty text, with the effective
+// background it should paint on and the alignment requested by the
+// source Segment.
+type renderedSeg struct {
+	body  string
+	bg    string
+	align string
+}
+
+// collectVisibleSegments renders each segment in row, drops empty
+// renders, and records each survivor's body, effective bg, and align.
+func collectVisibleSegments(p *payload, row Row, env renderEnv) []renderedSeg {
+	var visible []renderedSeg
+	for _, seg := range row.Segments {
+		s := renderSegment(p, seg, env)
+		if s == "" {
+			continue
+		}
+		bg := effectiveSegmentBg(row, seg, len(visible), true)
+		visible = append(visible, renderedSeg{body: s, bg: bg, align: seg.Align})
+	}
+	return visible
+}
+
+// findAlignmentSplit returns the index of the first right-aligned
+// visible segment, or len(visible) if none exists. Once the split is
+// crossed every subsequent segment joins the right group regardless
+// of its own Align.
+func findAlignmentSplit(visible []renderedSeg) int {
+	for i, v := range visible {
+		if v.align == "right" {
+			return i
+		}
+	}
+	return len(visible)
+}
+
+// segmentLayoutMetrics returns the usable col count (ttyCols minus
+// margins and optional caps) and the total width consumed by the
+// visible segment bodies plus the chevron separators between them.
+// Both are zero when ttyCols is unknown.
+func segmentLayoutMetrics(env renderEnv, visible []renderedSeg, hasLeftCap, hasRightCap bool) (usable, used int) {
+	if env.ttyCols == 0 {
+		return 0, 0
+	}
+	usable = env.ttyCols - 2*env.margin
+	if hasLeftCap {
+		usable--
+	}
+	if hasRightCap {
+		usable--
+	}
+	for _, seg := range visible {
+		used += displayWidth(seg.body)
+	}
+	used += (len(visible) - 1) * powerlineSeparatorWidth
+	return usable, used
+}
+
+// renderChevron returns one Powerline transition: pre-space in prevBg,
+// the chev-cell with the style's asymmetric (bg, fg) pair, and
+// post-space in nextBg. Solid style fills the wedge in prevBg over
+// nextBg; thin style draws the line in nextBg trailing prevBg. When
+// prevBg == nextBg the static defaultSameBgChevronFG keeps the glyph
+// visible against the uniform background.
+func renderChevron(prevBg, nextBg, glyph, style string) string {
+	var chevCellBg, chevFg string
+	if style == powerlineStyleSolid {
+		chevCellBg, chevFg = nextBg, prevBg
+	} else {
+		chevCellBg, chevFg = prevBg, nextBg
+	}
+	if prevBg == nextBg {
+		chevFg = defaultSameBgChevronFG
+	}
+	var b strings.Builder
+	b.WriteString(bg256(prevBg))
+	b.WriteString(" ")
+	b.WriteString(bg256(chevCellBg))
+	b.WriteString(fg256(chevFg))
+	b.WriteString(glyph)
+	b.WriteString(reset)
+	b.WriteString(bg256(nextBg))
+	b.WriteString(" ")
+	return b.String()
+}
+
+// writeLeftCap writes the leading end-cap to b. Square style emits a
+// 1-col bg-painted space; round and slant emit a glyph in fg=firstBg
+// on the default bg, opened with \x1b[49m so prior margin spaces stay
+// unstyled.
+func writeLeftCap(b *strings.Builder, caps capGlyphs, firstBg string) {
+	if caps.left == "" {
+		b.WriteString(bg256(firstBg))
+		b.WriteString(" ")
+		return
+	}
+	b.WriteString("\x1b[49m")
+	b.WriteString(fg256(firstBg))
+	b.WriteString(caps.left)
+	b.WriteString(reset)
+}
+
+// writeRightCap writes the trailing end-cap to b. Square style emits
+// a 1-col plain space that inherits the lastBg already painted by the
+// final segment's bg-restore. Round and slant fully reset, then emit
+// fg=lastBg + glyph on the default bg.
+func writeRightCap(b *strings.Builder, caps capGlyphs, lastBg string) {
+	if caps.right == "" {
+		b.WriteString(" ")
+		return
+	}
+	b.WriteString(reset)
+	b.WriteString(fg256(lastBg))
+	b.WriteString(caps.right)
 }
 
 // wrapPct conditionally wraps pctText in the threshold-chosen
