@@ -193,6 +193,20 @@ type Segment struct {
 	// no-op (segments stay inline) when ttyCols is unknown or the
 	// row already fits.
 	Wrap bool `json:"wrap,omitempty"`
+
+	// MaxWidth, when positive, caps the visible column width of this
+	// segment's rendered body. Bodies longer than MaxWidth are
+	// shortened to MaxWidth-1 columns and suffixed with "…" (U+2026
+	// HORIZONTAL ELLIPSIS); shorter bodies pass through unchanged.
+	// Zero (the default) and negative values disable truncation.
+	// Truncation runs on the segment's plain body BEFORE the style()
+	// wrap, so it is safe to apply to text-only segments
+	// (text, cwd, git_branch, model, …). Segments that embed internal
+	// ANSI escape sequences for sub-styling (e.g. context, limit_5h,
+	// limit_7d when threshold_target is "pct") should leave MaxWidth
+	// at 0 — truncating across an embedded escape can leave the
+	// terminal in an unintended SGR state.
+	MaxWidth int `json:"max_width,omitempty"`
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage
@@ -1031,6 +1045,16 @@ func renderSegment(p *payload, s Segment, env renderEnv) string {
 	if out == "" {
 		return ""
 	}
+	// MaxWidth truncation runs on the raw body BEFORE the style()
+	// wrap. Safe on plain-text bodies (text, cwd, git_branch, model,
+	// …); segments that self-embed ANSI escapes for sub-styling
+	// (context/limit_* with threshold_target=pct) should leave
+	// MaxWidth at 0 — runewidth.Truncate is not ANSI-aware and a
+	// mid-escape cut would leave the terminal in an unintended SGR
+	// state.
+	if s.MaxWidth > 0 {
+		out = truncateToWidth(out, s.MaxWidth)
+	}
 	// For ThresholdTarget == "pct", the segment function has already
 	// colored its percentage substring internally; the outer wrap
 	// must therefore use the static FG so non-pct regions render in
@@ -1040,6 +1064,23 @@ func renderSegment(p *payload, s Segment, env renderEnv) string {
 		fg = chooseFG(s, p)
 	}
 	return style(out, fg, s.BG, s.Bold, env.colorEnabled)
+}
+
+// truncateToWidth shortens s to at most max display columns, suffixing
+// with "…" (U+2026) when truncation actually happens. Returns s
+// unchanged when it already fits or when max <= 0. The width
+// accounting goes through go-runewidth so emoji, CJK fullwidth, and
+// zero-width joiners are handled correctly; ANSI escape sequences in
+// s would NOT be accounted for and may be split mid-escape — callers
+// must avoid passing pre-styled bodies here.
+func truncateToWidth(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	if runewidth.StringWidth(s) <= max {
+		return s
+	}
+	return runewidth.Truncate(s, max, "…")
 }
 
 // chooseFG picks the foreground color for a segment, honouring
