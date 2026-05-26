@@ -182,6 +182,17 @@ type Segment struct {
 	// or the row already overflows. Unknown values are ignored
 	// (treated as left).
 	Align string `json:"align,omitempty"`
+
+	// Wrap, when true, marks this segment as eligible for row-overflow
+	// reflow. If the containing row's visible content would exceed the
+	// usable width (ttyCols - 2*margin, minus the cap columns when
+	// Caps is active), every wrap-marked segment is extracted into a
+	// new row inserted directly after the original. The new row
+	// inherits the parent row's Bg, Palette, Caps, and Powerline mode;
+	// palette rotation restarts at index 0. Reflow degrades to a
+	// no-op (segments stay inline) when ttyCols is unknown or the
+	// row already fits.
+	Wrap bool `json:"wrap,omitempty"`
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage
@@ -527,11 +538,11 @@ var defaultConfig = Config{
 					{Min: 70, FG: "136"},
 					{Min: 90, FG: "160"},
 				}},
-				{Type: "limit_5h", FG: "245", Style: "bar+pct", BarWidth: 8, ThresholdTarget: "pct", Thresholds: []Threshold{
+				{Type: "limit_5h", FG: "245", Style: "bar+pct", BarWidth: 8, Wrap: true, ThresholdTarget: "pct", Thresholds: []Threshold{
 					{Min: 70, FG: "136"},
 					{Min: 90, FG: "160"},
 				}},
-				{Type: "limit_7d", FG: "245", Style: "bar+pct", BarWidth: 8, ThresholdTarget: "pct", Thresholds: []Threshold{
+				{Type: "limit_7d", FG: "245", Style: "bar+pct", BarWidth: 8, Wrap: true, ThresholdTarget: "pct", Thresholds: []Threshold{
 					{Min: 70, FG: "136"},
 					{Min: 90, FG: "160"},
 				}},
@@ -668,6 +679,110 @@ func displayWidth(s string) int {
 	return runewidth.StringWidth(stripped)
 }
 
+// hasAnyWrap reports whether any segment in segs carries the Wrap
+// flag. Cheap pre-check for the reflow logic so rows without any
+// wrap-eligible segments skip the more expensive width measurement.
+func hasAnyWrap(segs []Segment) bool {
+	for _, s := range segs {
+		if s.Wrap {
+			return true
+		}
+	}
+	return false
+}
+
+// rowOverflows reports whether the row's visible rendered width would
+// exceed the usable column count (ttyCols - 2*margin, minus cap
+// columns when Caps is active). Returns false when ttyCols is 0
+// (no measurement possible) so reflow degrades to a no-op.
+//
+// The width estimate sums each visible segment's body width, the
+// per-style separator cost between visible pairs (powerline chevron
+// triplet or natural separator string), and approximates the two
+// cap glyphs as 1 col each when Caps is active. It does NOT account
+// for the right-align padding gap; a row that uses right-align AND
+// reflow is unusual and the estimate stays conservative.
+func rowOverflows(p *payload, row Row, env renderEnv, powerlineActive bool, sep string) bool {
+	if env.ttyCols == 0 {
+		return false
+	}
+	used := 0
+	visible := 0
+	for _, seg := range row.Segments {
+		body := renderSegment(p, seg, env)
+		if body == "" {
+			continue
+		}
+		used += displayWidth(body)
+		visible++
+	}
+	if visible <= 1 {
+		return false
+	}
+	if powerlineActive {
+		used += (visible - 1) * powerlineSeparatorWidth
+	} else {
+		used += (visible - 1) * displayWidth(sep)
+	}
+	usable := env.ttyCols - 2*env.margin
+	if powerlineActive && row.Caps {
+		usable -= 2
+	}
+	return used > usable
+}
+
+// splitWrap partitions row.Segments into a left group (segments
+// without the Wrap flag) and a right group (segments with Wrap=true).
+// The returned (left, wrapped) pair shares the parent row's Bg,
+// Palette, Caps, and Align fields. The Wrap flag is cleared on the
+// moved segments so the new row never re-triggers reflow on a
+// further pass.
+func splitWrap(row Row) (Row, Row) {
+	leftSegs := make([]Segment, 0, len(row.Segments))
+	wrapSegs := make([]Segment, 0)
+	for _, s := range row.Segments {
+		if s.Wrap {
+			s2 := s
+			s2.Wrap = false
+			wrapSegs = append(wrapSegs, s2)
+		} else {
+			leftSegs = append(leftSegs, s)
+		}
+	}
+	left := row
+	left.Segments = leftSegs
+	wrapped := row
+	wrapped.Segments = wrapSegs
+	return left, wrapped
+}
+
+// expandWrappedRows walks the configured rows and, for each row that
+// overflows AND contains at least one wrap-marked segment, splits the
+// row into a left half (non-wrap segments) and a right half (wrap
+// segments) inserted directly after it. Rows that fit, rows without
+// any Wrap segments, and right-aligned rows (whose reflow behaviour
+// would be ambiguous) pass through unchanged.
+func expandWrappedRows(p *payload, rows []Row, env renderEnv, powerlineActive bool, sep string) []Row {
+	out := make([]Row, 0, len(rows))
+	for _, row := range rows {
+		if row.Align == "right" {
+			out = append(out, row)
+			continue
+		}
+		if !hasAnyWrap(row.Segments) {
+			out = append(out, row)
+			continue
+		}
+		if !rowOverflows(p, row, env, powerlineActive, sep) {
+			out = append(out, row)
+			continue
+		}
+		left, wrapped := splitWrap(row)
+		out = append(out, left, wrapped)
+	}
+	return out
+}
+
 // Render parses raw, walks Config.Rows, and returns the joined multi-line
 // output. An empty Config.Rows triggers defaultConfig (rows plus
 // Powerline/PowerlineStyle/CapStyle so the out-of-the-box look matches
@@ -718,6 +833,16 @@ func Render(opts Options, raw []byte) (string, error) {
 	if env.ttyCols > 0 && env.ttyCols <= 2*env.margin {
 		env.margin = 0
 	}
+
+	// Responsive row overflow (reflow): rows that overflow ttyCols
+	// AND contain at least one Wrap-marked segment are split into
+	// two — non-wrap segments stay in place, wrap segments move into
+	// a new row inserted directly after the original. The new row
+	// inherits Bg/Palette/Caps from its parent. The expansion runs
+	// before per-row dispatch so the downstream renderers see only
+	// already-split rows and need no awareness of wrap.
+	powerlineActive := cfg.Powerline && env.colorEnabled
+	rows = expandWrappedRows(&p, rows, env, powerlineActive, sep)
 
 	var lines []string
 	for _, row := range rows {

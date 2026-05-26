@@ -8,13 +8,15 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** active development — `0.2.21`. The native renderer is the
+> **Status:** active development — `0.2.22`. The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
 > hidden-by-default schema-health indicator), per-segment right-align
-> and configurable bar widths, terminal-size detection, and a
-> four-rung schema-robustness ladder behind the indicator: per-segment
+> and configurable bar widths, terminal-size detection with automatic
+> row-overflow reflow (segments marked `wrap: true` are lifted onto a
+> new row when the parent row would overflow), and a four-rung
+> schema-robustness ladder behind the indicator: per-segment
 > isolated payload parsing, automatic `.diag` drift logging,
 > persistent `schema_version` tracking, and a `ccsb doctor`
 > schema-drift diff against the most recent capture. Compatibility-mode
@@ -144,12 +146,11 @@ section and the full segment vocabulary are documented in
   schema-robustness ladder (per-segment isolated parsing, `.diag`
   drift logger, `ccsb doctor` schema-check, persistent
   `schema_version` tracking).
-- **Next** — three layout primitives still open: responsive row
-  overflow (`Segment.wrap` — segments wander into a new row when the
-  row overflows), `max_width` truncation (`cwd` / `git_branch` /
-  `text` shorten with an ellipsis), and `min_cols` conditional
-  include (segment is hidden when the terminal is narrower than its
-  declared threshold).
+- **Next** — two layout primitives still open: `max_width` truncation
+  (`cwd` / `git_branch` / `text` shorten with an ellipsis when the
+  row would otherwise overflow) and `min_cols` conditional include
+  (segment is hidden when the terminal is narrower than its declared
+  threshold).
 - **Later** — a GoReleaser-based release pipeline producing
   cross-platform binaries on GitHub Releases.
 
