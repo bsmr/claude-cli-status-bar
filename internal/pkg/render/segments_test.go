@@ -496,3 +496,15 @@ func TestRenderTTYSize_RowsZeroIsNotHidden(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "128×0")
 	}
 }
+
+func TestRenderSchemaHealth_HiddenWhenNoIssue(t *testing.T) {
+	if got := renderSchemaHealth(&payload{}, Segment{}, renderEnv{}); got != "" {
+		t.Errorf("got %q, want empty when env.schemaIssue is false", got)
+	}
+}
+
+func TestRenderSchemaHealth_GlyphWhenIssue(t *testing.T) {
+	if got := renderSchemaHealth(&payload{}, Segment{}, renderEnv{schemaIssue: true}); got != "☠" {
+		t.Errorf("got %q, want ☠", got)
+	}
+}

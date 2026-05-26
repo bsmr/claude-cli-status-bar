@@ -294,14 +294,21 @@ var defaultConfig = Config{
 					{Min: 70, FG: "136"},
 					{Min: 90, FG: "160"},
 				}},
-				{Type: "limit_5h", FG: "245", ThresholdTarget: "pct", Thresholds: []Threshold{
+				{Type: "limit_5h", FG: "245", Style: "bar+pct", BarWidth: 8, ThresholdTarget: "pct", Thresholds: []Threshold{
 					{Min: 70, FG: "136"},
 					{Min: 90, FG: "160"},
 				}},
-				{Type: "limit_7d", FG: "245", ThresholdTarget: "pct", Thresholds: []Threshold{
+				{Type: "limit_7d", FG: "245", Style: "bar+pct", BarWidth: 8, ThresholdTarget: "pct", Thresholds: []Threshold{
 					{Min: 70, FG: "136"},
 					{Min: 90, FG: "160"},
 				}},
+				// schema_health: hidden when env.schemaIssue is false, so
+				// it costs no palette slot and no chevron. When the
+				// indicator fires it paints itself as a dark-red block
+				// (bg=52) with a bright-red bold skull (fg=160), pulled
+				// to the right edge to break the monotonic grey streak —
+				// the visual alarm the user explicitly asked for.
+				{Type: "schema_health", FG: "160", BG: "52", Bold: true, Align: "right"},
 			},
 		},
 		{
@@ -436,12 +443,17 @@ func displayWidth(s string) int {
 // statusLine.
 func Render(opts Options, raw []byte) (string, error) {
 	var p payload
-	if err := json.Unmarshal(raw, &p); err != nil {
-		// last-resort single-line so the bar is never blank. Pass a
-		// nil payload because the parse just failed; lastResort
-		// falls through to a relaxed second-pass parse of raw.
-		return lastResort(opts, nil, raw), nil
+	parseErr := json.Unmarshal(raw, &p)
+	if parseErr != nil {
+		// Reset p to zero — partial population on Unmarshal error is
+		// unreliable. Detection below still sees the failure via the
+		// parseErr, and the schema_health segment surfaces it. If the
+		// resulting row renders empty too (e.g. user config without
+		// schema_health), the empty-fallthrough below triggers
+		// lastResort with its relaxed second-pass parse.
+		p = payload{}
 	}
+	schemaIssue := detectSchemaIssue(&p, parseErr)
 
 	cfg := opts.Config
 	usingDefault := len(cfg.Rows) == 0
@@ -468,6 +480,7 @@ func Render(opts Options, raw []byte) (string, error) {
 		nowUnix:        nowFunc().Unix(),
 		powerlineStyle: cfg.PowerlineStyle,
 		capStyle:       cfg.CapStyle,
+		schemaIssue:    schemaIssue,
 	}
 	env.ttyCols, env.ttyRows = discoverTermSize(cfg)
 	env.margin = cfg.effectiveMargin()
@@ -498,8 +511,14 @@ func Render(opts Options, raw []byte) (string, error) {
 		// every default segment hides when its data is missing.
 		// Fall through to the last-resort line so the bar is never
 		// blank. A user-supplied config that intentionally renders
-		// empty stays empty.
-		return lastResort(opts, &p, raw), nil
+		// empty stays empty. When parseErr != nil the parsed p was
+		// reset to zero, so we pass nil to opt back into the relaxed
+		// second-pass parse inside lastResort.
+		var lrPayload *payload
+		if parseErr == nil {
+			lrPayload = &p
+		}
+		return lastResort(opts, lrPayload, raw), nil
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -613,6 +632,30 @@ type renderEnv struct {
 	powerlineStyle string // "thin" (default) | "solid"; used by renderRowPowerline via pickGlyph
 	capStyle       string // "" / "round" / "square" / "slant"; "" → round
 	version        string // ccsb version forwarded from Options.Version
+	schemaIssue    bool   // true when the inbound payload looks broken; drives the schema_health segment
+}
+
+// detectSchemaIssue returns true when the inbound JSON payload looks broken
+// enough to warrant the visible "schema health" indicator. The bar is true
+// when either:
+//
+//   - the top-level JSON parse failed outright (parseErr != nil), or
+//   - one of the three critical fields ccsb always expects from Claude Code
+//     is empty: session_id, model.display_name, workspace.current_dir.
+//
+// Other expected fields (cost, rate_limits, context_window, …) are NOT
+// checked: they legitimately arrive empty during the first few status
+// updates of a session, so flagging them would produce false positives.
+// Later patches widen the check (per-segment isolation, doctor schema
+// command, drift logger).
+func detectSchemaIssue(p *payload, parseErr error) bool {
+	if parseErr != nil {
+		return true
+	}
+	if p.SessionID == "" || p.Model.DisplayName == "" || p.Workspace.CurrentDir == "" {
+		return true
+	}
+	return false
 }
 
 // renderSegment dispatches one segment via the registry. Unknown types

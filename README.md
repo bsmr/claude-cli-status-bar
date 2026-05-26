@@ -6,15 +6,16 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** active development — `0.2.14`. Proxy mode, capture, hook
+> **Status:** active development — `0.2.16`. Proxy mode, capture, hook
 > management, a configurable Powerline-aware native renderer with a
-> full out-of-the-box default layout, terminal-size detection, row- and
-> per-segment right-alignment, per-segment configurable bar widths,
-> and a `ccsb mode` subcommand to switch between proxy and native
-> rendering are all functional. `ccsb install` defaults to native mode
-> when the previous `statusLine` was the canonical
-> `npx -y ccstatusline@latest`; otherwise it seeds proxy mode so the
-> prior renderer keeps working.
+> full out-of-the-box default layout (now including bar-style 5h/7d
+> rate-limit segments and a hidden-by-default schema-health indicator),
+> terminal-size detection, row- and per-segment right-alignment,
+> per-segment configurable bar widths, `ccsb mode` for proxy/native
+> switching, and `ccsb config reset` for restoring defaults. `ccsb
+> install` defaults to native mode when the previous `statusLine` was
+> the canonical `npx -y ccstatusline@latest`; otherwise it seeds proxy
+> mode so the prior renderer keeps working.
 
 ## What it does
 
@@ -69,13 +70,14 @@ Requires Go 1.26 or newer.
 ## Use
 
 ```bash
-ccsb install     # save current statusLine, replace it with ccsb
-ccsb mode        # print current mode (native or proxy)
-ccsb mode native # clear proxy block so the native renderer drives ccsb
-ccsb mode proxy  # restore proxy mode (default: npx -y ccstatusline@latest)
-ccsb status      # print resolved paths, hook state, mode, proxy/backup
-ccsb uninstall   # restore the previous statusLine byte-for-byte
-ccsb help        # subcommand summary
+ccsb install      # save current statusLine, replace it with ccsb
+ccsb mode         # print current mode (native or proxy)
+ccsb mode native  # clear proxy block so the native renderer drives ccsb
+ccsb mode proxy   # restore proxy mode (default: npx -y ccstatusline@latest)
+ccsb config reset # move config.json aside (timestamped backup); defaults apply
+ccsb status       # print resolved paths, hook state, mode, proxy/backup
+ccsb uninstall    # restore the previous statusLine byte-for-byte
+ccsb help         # subcommand summary
 ```
 
 `install` saves the existing `statusLine` value verbatim into ccsb's config

@@ -278,7 +278,7 @@ Unknown `cap_style` values fall back to `"round"`.
 ## Segments
 
 Every segment is an object with at least a `type` field. The renderer
-recognises 16 types.
+recognises 17 types.
 
 ### Common fields
 
@@ -602,6 +602,31 @@ Typical placement is the last segment of the last row with
 {"type": "version", "fg": "245", "align": "right"}
 ```
 
+#### `schema_health`
+
+Visible-when-broken indicator for the inbound Claude Code JSON payload.
+Emits a single skull glyph (`☠` U+2620) when the renderer detects a
+schema issue, otherwise renders empty so the segment costs no palette
+slot and no chevron — completely invisible in the happy path.
+
+The detection is intentionally narrow to avoid false positives: it fires
+only when the top-level JSON parse fails outright, or when one of the
+three critical fields ccsb always expects is empty (`session_id`,
+`model.display_name`, `workspace.current_dir`). Optional fields like
+`rate_limits` or `cost` arriving empty during the first updates of a
+session do NOT trigger the indicator.
+
+Default placement (in the built-in `defaultConfig`) is the right edge
+of row 1 with a dark-red alarm block:
+
+```json
+{"type": "schema_health", "fg": "160", "bg": "52", "bold": true, "align": "right"}
+```
+
+Override the colours or alignment freely. Placing the segment in a user
+config also enables the indicator there; omitting it disables the
+indicator entirely.
+
 ## Colors
 
 Foreground and background use ANSI 256-color codes as decimal strings in
@@ -642,12 +667,13 @@ in from the built-in `defaultConfig` when `rows` is absent):
           {"type": "context", "fg": "245", "style": "bar+pct",
            "threshold_target": "pct",
            "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
-          {"type": "limit_5h", "fg": "245",
+          {"type": "limit_5h", "fg": "245", "style": "bar+pct", "bar_width": 8,
            "threshold_target": "pct",
            "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
-          {"type": "limit_7d", "fg": "245",
+          {"type": "limit_7d", "fg": "245", "style": "bar+pct", "bar_width": 8,
            "threshold_target": "pct",
-           "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]}
+           "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
+          {"type": "schema_health", "fg": "160", "bg": "52", "bold": true, "align": "right"}
         ]
       },
       {
@@ -665,11 +691,21 @@ in from the built-in `defaultConfig` when `rows` is absent):
 }
 ```
 
-Output (ANSI stripped):
+Output (ANSI stripped, valid payload — `schema_health` is hidden):
 
 ```
-  Opus 4.7 1M  🧠  ●●●◑○○○○○○○○○○○○ 22% 217k/1M  5h: 5% · 4h25m  7d: 5% · 6d2h
-  main  +546 −107  claude-cli-status-bar                                                                          v0.2.11
+  Opus 4.7 1M  🧠  ●●●◑○○○○○○○○○○○○ 22% 217k/1M  5h: ◔○○○○○○○ 5% · 4h25m  7d: ◔○○○○○○○ 5% · 6d2h
+  main  +546 −107  claude-cli-status-bar                                                                          v0.2.16
+```
+
+If the inbound JSON payload from Claude Code looks broken (top-level
+parse failure, or one of the critical fields `session_id`,
+`model.display_name`, `workspace.current_dir` is empty), the
+`schema_health` segment fires and a dark-red block with a bright-red
+`☠` glyph appears at the right edge of row 1:
+
+```
+  …                                                                                                    ☠
 ```
 
 ### Single-line, compact

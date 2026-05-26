@@ -17,7 +17,7 @@ func stripANSI(s string) string {
 }
 
 func TestRender_EmptyConfigUsesDefaultConfig(t *testing.T) {
-	raw := []byte(`{"model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
+	raw := []byte(`{"session_id":"s","model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
 	got, err := Render(Options{}, raw)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -37,7 +37,7 @@ func TestRender_EmptyConfigUsesDefaultConfig(t *testing.T) {
 }
 
 func TestRender_DefaultLayoutShowsVersionWhenSet(t *testing.T) {
-	raw := []byte(`{"model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
+	raw := []byte(`{"session_id":"s","model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
 	got, err := Render(Options{NoColor: true, Version: "0.2.7"}, raw)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -51,7 +51,7 @@ func TestRender_DefaultLayoutShowsVersionWhenSet(t *testing.T) {
 }
 
 func TestRender_DefaultLayoutDevVersionShowsSkull(t *testing.T) {
-	raw := []byte(`{"model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
+	raw := []byte(`{"session_id":"s","model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
 	got, err := Render(Options{NoColor: true, Version: "dev"}, raw)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -115,6 +115,7 @@ func TestRender_DefaultSeparator(t *testing.T) {
 
 func TestRender_DefaultLayoutAgainstSamplePayload(t *testing.T) {
 	raw := []byte(`{
+		"session_id": "s",
 		"model": {"display_name": "Opus 4.7 (1M context)"},
 		"workspace": {"current_dir": "/home/u/projects/foo"},
 		"exceeds_200k_tokens": true,
@@ -139,10 +140,17 @@ func TestRender_DefaultLayoutAgainstSamplePayload(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows, got %d:\n%s", len(rows), got)
 	}
-	for _, want := range []string{"Opus 4.7 1M", "27% 273k/1M", "5h: 7%", "7d: 30%"} {
+	// Row 1 substrings — 5h/7d now render as "bar+pct" in defaultConfig,
+	// so "5h: 7%" no longer appears as a contiguous substring; check the
+	// pieces separately.
+	for _, want := range []string{"Opus 4.7 1M", "27% 273k/1M", "5h:", " 7%", "7d:", " 30%"} {
 		if !strings.Contains(rows[0], want) {
 			t.Errorf("row 1 missing %q:\n%s", want, rows[0])
 		}
+	}
+	// Schema health must NOT fire on this valid payload.
+	if strings.Contains(rows[0], "☠") {
+		t.Errorf("schema_health should be hidden on a valid payload:\n%s", rows[0])
 	}
 	if !strings.Contains(rows[1], "foo") {
 		t.Errorf("row 2 should include cwd basename:\n%s", rows[1])
@@ -2071,5 +2079,97 @@ func TestSegmentAlignRight_Powerline_OverflowFallsBackInline(t *testing.T) {
 	want := "LLL" + " " + powerlineThinGlyph + " " + "RRR"
 	if stripped != want {
 		t.Errorf("stripped\ngot  %q\nwant %q", stripped, want)
+	}
+}
+
+// --- schema health detection ------------------------------------------------
+
+func TestDetectSchemaIssue_TrueOnParseError(t *testing.T) {
+	if !detectSchemaIssue(&payload{}, errors.New("any parse error")) {
+		t.Error("parse error must always be flagged as a schema issue")
+	}
+}
+
+func TestDetectSchemaIssue_TrueOnMissingCriticalFields(t *testing.T) {
+	cases := []struct {
+		name string
+		p    payload
+	}{
+		{"all empty", payload{}},
+		{"no session_id", payload{Model: modelF{DisplayName: "Opus"}, Workspace: workspace{CurrentDir: "/x"}}},
+		{"no model.display_name", payload{SessionID: "s", Workspace: workspace{CurrentDir: "/x"}}},
+		{"no workspace.current_dir", payload{SessionID: "s", Model: modelF{DisplayName: "Opus"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !detectSchemaIssue(&tc.p, nil) {
+				t.Errorf("expected schema issue for %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestDetectSchemaIssue_FalseOnFullPayload(t *testing.T) {
+	p := payload{
+		SessionID: "s",
+		Model:     modelF{DisplayName: "Opus"},
+		Workspace: workspace{CurrentDir: "/x"},
+	}
+	if detectSchemaIssue(&p, nil) {
+		t.Error("valid payload must not be flagged")
+	}
+}
+
+func TestRender_SchemaHealthHiddenOnValidPayload(t *testing.T) {
+	raw := []byte(`{"session_id":"s","model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
+	got, err := Render(Options{NoColor: true}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(got, "☠") {
+		t.Errorf("default layout must not show ☠ when the payload is valid:\n%s", got)
+	}
+}
+
+func TestRender_SchemaHealthVisibleOnMissingSessionID(t *testing.T) {
+	// model + workspace present, session_id missing — schema_health
+	// must fire.
+	raw := []byte(`{"model":{"display_name":"Opus 4.7"},"workspace":{"current_dir":"/tmp"}}`)
+	got, err := Render(Options{NoColor: true}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(got, "☠") {
+		t.Errorf("default layout must show ☠ when session_id is missing:\n%s", got)
+	}
+}
+
+func TestRender_SchemaHealthVisibleOnParseFailure(t *testing.T) {
+	got, err := Render(Options{NoColor: true}, []byte("not json"))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(got, "☠") {
+		t.Errorf("default layout must show ☠ when the JSON parse fails:\n%s", got)
+	}
+}
+
+func TestRender_SchemaHealthOnlyInDefaultLayoutByDefault(t *testing.T) {
+	// A user config without a schema_health segment must NOT show the
+	// indicator even when the payload is broken — the segment is
+	// opt-in.
+	cfg := Config{
+		Margin: intPtr(0),
+		Rows: []Row{
+			{Segments: []Segment{{Type: "text", Label: "static"}}},
+		},
+	}
+	raw := []byte(`{"model":{"display_name":"X"}}`) // missing session_id + cwd
+	got, err := Render(Options{NoColor: true, Config: cfg}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(got, "☠") {
+		t.Errorf("user config without schema_health segment must not show ☠:\n%s", got)
 	}
 }
