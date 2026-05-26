@@ -89,7 +89,7 @@ func TestRender_UnknownSegmentTypeRendersMarker(t *testing.T) {
 
 func TestRender_RowsJoinedWithNewline_SegmentsWithSeparator(t *testing.T) {
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{
 			{Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}}},
 			{Segments: []Segment{{Type: "text", Label: "C"}}},
@@ -108,7 +108,7 @@ func TestRender_RowsJoinedWithNewline_SegmentsWithSeparator(t *testing.T) {
 
 func TestRender_DefaultSeparator(t *testing.T) {
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows:   []Row{{Segments: []Segment{{Type: "text", Label: "A"}, {Type: "text", Label: "B"}}}},
 	}
 	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
@@ -133,7 +133,7 @@ func TestRender_DefaultLayoutAgainstSamplePayload(t *testing.T) {
 			"seven_day":  {"used_percentage": 30,   "resets_at": 700}
 		}
 	}`)
-	got, err := Render(Options{Cwd: "/tmp", NoColor: true, Config: Config{Margin: intPtr(0)}}, raw)
+	got, err := Render(Options{Cwd: "/tmp", NoColor: true, Config: Config{Margin: new(0)}}, raw)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestRender_StyledEmptySegmentEmitsNothing(t *testing.T) {
 func TestRender_StyledNonEmptySegmentStillWraps(t *testing.T) {
 	// Regression: the empty-text early-return must not affect normal segments.
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows:   []Row{{Segments: []Segment{{Type: "text", Label: "hello", FG: "33"}}}},
 	}
 	got, err := Render(Options{Config: cfg}, []byte(`{}`))
@@ -904,7 +904,7 @@ func TestRender_PowerlineTTYColsPropagated(t *testing.T) {
 
 	cfg := Config{
 		Powerline: true,
-		Margin:    intPtr(0), // disable margin so bg-fill == ttyCols
+		Margin:    new(0), // disable margin so bg-fill == ttyCols
 		Rows:      []Row{{Bg: "234", Segments: []Segment{{Type: "text", Label: "hi"}}}},
 	}
 	got, err := Render(Options{Config: cfg}, []byte(`{}`))
@@ -1250,10 +1250,6 @@ func TestEffectiveSegmentBg_PaletteRotation(t *testing.T) {
 	}
 }
 
-// intPtr returns a pointer to v. Used by Config tests that need to
-// distinguish "explicit zero" from "unset" on Config.Margin.
-func intPtr(v int) *int { return &v }
-
 func TestRenderRowNatural_HonorsMargin(t *testing.T) {
 	row := Row{Segments: []Segment{{Type: "text", Label: "hello"}}}
 	env := renderEnv{colorEnabled: false, margin: 3}
@@ -1278,7 +1274,7 @@ func TestRender_DefaultMarginAppliesToNaturalRows(t *testing.T) {
 
 func TestRender_ExplicitZeroMarginSuppresses(t *testing.T) {
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows:   []Row{{Segments: []Segment{{Type: "text", Label: "x"}}}},
 	}
 	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
@@ -1386,16 +1382,14 @@ func TestRenderRowPowerline_ChevronPreSpaceInPrevBg(t *testing.T) {
 	env := renderEnv{colorEnabled: true}
 	got := renderRowPowerline(&payload{}, row, env)
 
-	// Find the chevron glyph position in the raw output.
-	chevIdx := strings.Index(got, powerlineThinGlyph)
-	if chevIdx < 0 {
+	// Find the chevron glyph in the raw output and grab everything
+	// before it. The pre-space MUST be preceded by bg256(prevBg="234").
+	// If the output instead contains bg256(nextBg="236") immediately
+	// before the pre-space, the 0.2.3 bug has regressed.
+	before, _, found := strings.Cut(got, powerlineThinGlyph)
+	if !found {
 		t.Fatalf("chevron glyph not in output: %q", got)
 	}
-	// Look backwards from chevIdx for the pre-space. The pre-space
-	// MUST be preceded by bg256(prevBg="234"). If the output
-	// instead contains bg256(nextBg="236") immediately before the
-	// pre-space, the 0.2.3 bug has regressed.
-	before := got[:chevIdx]
 	preSpaceBg234 := "\x1b[48;5;234m \x1b[48;5;234m"
 	preSpaceBg236 := "\x1b[48;5;236m \x1b[48;5;236m"
 	if !strings.Contains(before, preSpaceBg234) {
@@ -1805,7 +1799,7 @@ func TestRender_AlignRightBypassesPowerline(t *testing.T) {
 	// row-bg or chevron glyphs.
 	cfg := Config{
 		Powerline: true,
-		Margin:    intPtr(0),
+		Margin:    new(0),
 		Rows: []Row{
 			{
 				Align:    "right",
@@ -1832,7 +1826,7 @@ func TestRender_AlignRightBypassesPowerline(t *testing.T) {
 
 func TestRender_VersionSegmentRendersVersion(t *testing.T) {
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows:   []Row{{Segments: []Segment{{Type: "version"}}}},
 	}
 	got, err := Render(Options{Config: cfg, NoColor: true, Version: "1.2.3"}, []byte(`{}`))
@@ -1846,7 +1840,7 @@ func TestRender_VersionSegmentRendersVersion(t *testing.T) {
 
 func TestRender_VersionSegmentHiddenWhenVersionEmpty(t *testing.T) {
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows:   []Row{{Segments: []Segment{{Type: "version"}}}},
 	}
 	got, err := Render(Options{Config: cfg, NoColor: true, Version: ""}, []byte(`{}`))
@@ -1878,7 +1872,7 @@ func TestSegmentAlignRight_NaturalMode_PadsBetweenLeftAndRight(t *testing.T) {
 	// Left "L" (1 col), right "R" (1 col) → padding = 20 - 1 - 1 = 18 spaces.
 	cfg := Config{
 		Width:  20,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "L"},
 			{Type: "text", Label: "R", Align: "right"},
@@ -1904,7 +1898,7 @@ func TestSegmentAlignRight_NaturalMode_UnknownWidthFallsBackInline(t *testing.T)
 	procStatReader = func(int) ([]byte, error) { return nil, errors.New("stub") }
 
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "L"},
 			{Type: "text", Label: "R", Align: "right"},
@@ -1926,7 +1920,7 @@ func TestSegmentAlignRight_NaturalMode_OverflowFallsBackInline(t *testing.T) {
 	// inserting negative padding.
 	cfg := Config{
 		Width:  1,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "L"},
 			{Type: "text", Label: "R", Align: "right"},
@@ -1947,7 +1941,7 @@ func TestSegmentAlignRight_NaturalMode_FirstSegmentRightAlignedFillsLeftPadding(
 	// right — equivalent to Row.Align="right" but per-segment.
 	cfg := Config{
 		Width:  10,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "X", Align: "right"},
 		}}},
@@ -1967,7 +1961,7 @@ func TestSegmentAlignRight_NaturalMode_MultipleRightAlignedStayGrouped(t *testin
 	// the same row joins the right group regardless of its own Align.
 	cfg := Config{
 		Width:  20,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "L"},
 			{Type: "text", Label: "R1", Align: "right"},
@@ -1993,7 +1987,7 @@ func TestSegmentAlignRight_Powerline_PaddingInheritsPrevBg(t *testing.T) {
 	// then carries left.bg → right.bg as usual.
 	cfg := Config{
 		Powerline: true,
-		Margin:    intPtr(0),
+		Margin:    new(0),
 		Width:     20,
 		Rows: []Row{{
 			Palette: []string{"237", "238"},
@@ -2034,7 +2028,7 @@ func TestSegmentAlignRight_Powerline_NoEndPaddingWhenRightAligned(t *testing.T) 
 	// no additional trailing whitespace after the right segment.
 	cfg := Config{
 		Powerline: true,
-		Margin:    intPtr(0),
+		Margin:    new(0),
 		Width:     20,
 		Rows: []Row{{
 			Palette: []string{"237", "238"},
@@ -2063,7 +2057,7 @@ func TestSegmentAlignRight_Powerline_OverflowFallsBackInline(t *testing.T) {
 	// truncation) so the user can still see all segments.
 	cfg := Config{
 		Powerline: true,
-		Margin:    intPtr(0),
+		Margin:    new(0),
 		Width:     5,
 		Rows: []Row{{
 			Palette: []string{"237", "238"},
@@ -2178,7 +2172,7 @@ func TestRender_SchemaHealthOnlyInDefaultLayoutByDefault(t *testing.T) {
 	// indicator even when the payload is broken — the segment is
 	// opt-in.
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{
 			{Segments: []Segment{{Type: "text", Label: "static"}}},
 		},
@@ -2655,7 +2649,7 @@ func TestRender_WrapMovesSegmentsToNewRowOnOverflow(t *testing.T) {
 	// extras; force a narrow tty via Config.Width so the row overflows.
 	cfg := Config{
 		Width:  30,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{
 			Palette: []string{"234"},
 			Segments: []Segment{
@@ -2688,7 +2682,7 @@ func TestRender_WrapMovesSegmentsToNewRowOnOverflow(t *testing.T) {
 func TestRender_WrapStaysInPlaceWhenRowFits(t *testing.T) {
 	cfg := Config{
 		Width:  200,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{
 			Segments: []Segment{
 				{Type: "text", Label: "A"},
@@ -2752,7 +2746,7 @@ func TestTruncateToWidth_CJKHandledCorrectly(t *testing.T) {
 func TestRender_MaxWidthTruncatesCwd(t *testing.T) {
 	raw := []byte(`{"workspace":{"current_dir":"/home/u/very/long/path/to/project-with-long-name"}}`)
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "cwd", Format: "full", MaxWidth: 12},
 		}}},
@@ -2772,7 +2766,7 @@ func TestRender_MaxWidthTruncatesCwd(t *testing.T) {
 func TestRender_MaxWidthIgnoredWhenShortEnough(t *testing.T) {
 	raw := []byte(`{"workspace":{"current_dir":"/short"}}`)
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "cwd", Format: "full", MaxWidth: 50},
 		}}},
@@ -2786,7 +2780,7 @@ func TestRender_MaxWidthIgnoredWhenShortEnough(t *testing.T) {
 func TestRender_MaxWidthAppliesToGitBranchToo(t *testing.T) {
 	// Use a text segment as a stand-in (git_branch needs a real .git dir).
 	cfg := Config{
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "feature/very-long-branch-name", MaxWidth: 10},
 		}}},
@@ -2802,7 +2796,7 @@ func TestRender_MaxWidthAppliesToGitBranchToo(t *testing.T) {
 func TestRender_MinColsHidesSegmentOnNarrowTerminal(t *testing.T) {
 	cfg := Config{
 		Width:  60, // tty narrower than the segment's threshold
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "A"},
 			{Type: "text", Label: "B", MinCols: 80},
@@ -2830,7 +2824,7 @@ func TestRender_MinColsHidesSegmentOnNarrowTerminal(t *testing.T) {
 func TestRender_MinColsKeepsSegmentOnWideTerminal(t *testing.T) {
 	cfg := Config{
 		Width:  200,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "A"},
 			{Type: "text", Label: "TOKENS", MinCols: 80},
@@ -2847,7 +2841,7 @@ func TestRender_MinColsBoundaryIsInclusive(t *testing.T) {
 	// ttyCols is strictly less than MinCols).
 	cfg := Config{
 		Width:  80,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "X", MinCols: 80},
 		}}},
@@ -2873,7 +2867,7 @@ func TestRender_MinColsIgnoredWhenTtyColsUnknown(t *testing.T) {
 func TestRender_MinColsZeroIsDisabled(t *testing.T) {
 	cfg := Config{
 		Width:  10,
-		Margin: intPtr(0),
+		Margin: new(0),
 		Rows: []Row{{Segments: []Segment{
 			{Type: "text", Label: "Z", MinCols: 0},
 		}}},
