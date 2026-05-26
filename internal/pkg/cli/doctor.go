@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
 // proxyIssue returns a non-empty human-readable description when cmd is a
@@ -30,11 +34,110 @@ func proxyIssue(cmd, self string) string {
 	}
 }
 
+// schemaCheckResult bundles the outcome of comparing a capture's
+// top-level keys against the set ccsb's renderer expects.
+//
+//   - CapturePath is the file inspected (empty when no capture was
+//     available).
+//   - Missing are keys ccsb's renderer expects that are absent from
+//     this capture. Some may legitimately be absent at session start
+//     (e.g. rate_limits) — the schema_health indicator's narrow
+//     detection treats those as informational.
+//   - Extra are keys present in the capture that ccsb does not
+//     recognise. These are likely additive schema changes from Claude
+//     Code; harmless to ccsb (Go ignores unknown JSON keys) but worth
+//     flagging so the user knows the renderer could grow new
+//     segments.
+//   - Note carries a human-readable hint when no useful comparison
+//     could be performed (no captures, capture unreadable, capture
+//     not a JSON object). CapturePath / Missing / Extra are then
+//     empty.
+type schemaCheckResult struct {
+	CapturePath string
+	Missing     []string
+	Extra       []string
+	Note        string
+}
+
+// latestCaptureJSON returns the absolute path to the lexicographically
+// last *.json file in dir, which by capture.basename's RFC3339Nano
+// naming is also the chronologically latest. Returns "" when no
+// matching file exists or dir is unreadable.
+func latestCaptureJSON(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var latest string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		if name > latest {
+			latest = name
+		}
+	}
+	if latest == "" {
+		return ""
+	}
+	return filepath.Join(dir, latest)
+}
+
+// schemaCheck reads the most recent capture in captureDir, decodes
+// its top-level keys, and diffs them against render.ExpectedPayloadKeys().
+// A missing capture, unreadable file, or non-object payload is reported
+// via the Note field rather than as an error — schemaCheck is a
+// diagnostic helper, not a hard-fail step.
+func schemaCheck(captureDir string) schemaCheckResult {
+	path := latestCaptureJSON(captureDir)
+	if path == "" {
+		return schemaCheckResult{Note: "no capture available — run ccsb at least once first"}
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return schemaCheckResult{CapturePath: path, Note: fmt.Sprintf("read capture: %s", err)}
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return schemaCheckResult{CapturePath: path, Note: fmt.Sprintf("capture is not a JSON object: %s", err)}
+	}
+	expected := render.ExpectedPayloadKeys()
+	expectedSet := make(map[string]bool, len(expected))
+	for _, k := range expected {
+		expectedSet[k] = true
+	}
+	var missing, extra []string
+	for _, k := range expected {
+		if _, ok := top[k]; !ok {
+			missing = append(missing, k)
+		}
+	}
+	for k := range top {
+		if !expectedSet[k] {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	return schemaCheckResult{CapturePath: path, Missing: missing, Extra: extra}
+}
+
 // runDoctor diagnoses common configuration problems and fixes them
 // automatically:
 //
 //   - settings.json not hooked → installs ccsb
 //   - proxy command is circular, another ccsb, or missing → native mode
+//
+// It also runs a non-fixing schema-check against the most recent
+// capture, listing any top-level JSON keys that are missing relative
+// to ccsb's renderer expectations or present as additive schema
+// extensions. Schema drift is informational — ccsb cannot fix the
+// upstream payload — but surfacing it explicitly helps explain a
+// surprising schema_health indicator.
 func runDoctor(p Paths, stdout io.Writer) error {
 	fixed := 0
 
@@ -70,6 +173,24 @@ func runDoctor(p Paths, stdout io.Writer) error {
 		fmt.Fprintln(stdout, "ccsb: doctor: no issues found")
 	} else {
 		fmt.Fprintf(stdout, "ccsb: doctor: fixed %d issue(s)\n", fixed)
+	}
+
+	// Schema-check section — informational, never returns an error.
+	res := schemaCheck(p.Capture)
+	switch {
+	case res.Note != "":
+		fmt.Fprintf(stdout, "ccsb: doctor: schema-check: %s\n", res.Note)
+	case len(res.Missing) == 0 && len(res.Extra) == 0:
+		fmt.Fprintf(stdout, "ccsb: doctor: schema-check: %s — all expected keys present, no extras\n",
+			filepath.Base(res.CapturePath))
+	default:
+		fmt.Fprintf(stdout, "ccsb: doctor: schema-check: %s\n", filepath.Base(res.CapturePath))
+		if len(res.Missing) > 0 {
+			fmt.Fprintf(stdout, "ccsb: doctor: schema-check: missing keys: %s\n", strings.Join(res.Missing, ", "))
+		}
+		if len(res.Extra) > 0 {
+			fmt.Fprintf(stdout, "ccsb: doctor: schema-check: additive keys: %s\n", strings.Join(res.Extra, ", "))
+		}
 	}
 	return nil
 }

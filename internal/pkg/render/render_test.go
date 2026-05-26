@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2349,5 +2350,44 @@ func TestRender_NoFieldErrorNoIndicator(t *testing.T) {
 	}
 	if strings.Contains(got, "☠") {
 		t.Errorf("schema_health must stay hidden on a fully valid payload:\n%s", got)
+	}
+}
+
+func TestExpectedPayloadKeys_ReturnsCopy(t *testing.T) {
+	a := ExpectedPayloadKeys()
+	b := ExpectedPayloadKeys()
+	if &a[0] == &b[0] {
+		t.Error("ExpectedPayloadKeys() must return a fresh slice each call")
+	}
+	a[0] = "mutated"
+	c := ExpectedPayloadKeys()
+	if c[0] == "mutated" {
+		t.Error("mutating the returned slice must not affect the source")
+	}
+}
+
+func TestExpectedPayloadKeys_MatchesParsePayload(t *testing.T) {
+	// Build a payload that includes every expected key set to JSON
+	// null. parsePayload should walk each key without producing a
+	// field error. If a key in the list is no longer handled by
+	// parsePayload (drift), this test would still pass — null unmarshals
+	// to zero for any type. The complementary case (parsePayload
+	// handling a key that is NOT in the list) is what would silently
+	// break ccsb doctor's diff; flag that with a count check below.
+	parts := make([]string, 0, len(expectedPayloadKeys))
+	for _, k := range expectedPayloadKeys {
+		parts = append(parts, fmt.Sprintf("%q: null", k))
+	}
+	raw := []byte("{" + strings.Join(parts, ",") + "}")
+	_, errs := parsePayload(raw)
+	if errs.topLevel != nil {
+		t.Fatalf("topLevel must be nil for a valid object, got %v", errs.topLevel)
+	}
+	if len(errs.fieldErrors) != 0 {
+		t.Errorf("null payload must not produce field errors; got %v", errs.fieldErrors)
+	}
+	// Sanity: the list must not be empty (would defeat the purpose).
+	if len(expectedPayloadKeys) < 5 {
+		t.Errorf("expectedPayloadKeys is suspiciously short (%d), did someone delete entries?", len(expectedPayloadKeys))
 	}
 }

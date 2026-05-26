@@ -643,6 +643,14 @@ Override the colours or alignment freely. Placing the segment in a user
 config also enables the indicator there; omitting it disables the
 indicator entirely.
 
+To investigate **why** the indicator fired, run `ccsb doctor`: among
+its other checks it diffs the most recent capture's top-level keys
+against the set ccsb's renderer expects, printing any missing keys
+(removed/renamed on Claude Code's side) and any additive keys (new
+fields ccsb does not yet handle). The schema-check is purely
+informational — ccsb cannot fix the upstream payload — but surfaces
+the drift explicitly so an unexpected ☠ has a concrete root cause.
+
 ## Colors
 
 Foreground and background use ANSI 256-color codes as decimal strings in
