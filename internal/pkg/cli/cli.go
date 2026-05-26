@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -55,6 +56,28 @@ func ResolvePaths(e Env) Paths {
 		Capture:  capture.DefaultDir(e.Home, e.XDGStateHome),
 		Self:     e.Self,
 	}
+}
+
+// NewFromOS reads ccsb's runtime configuration from the process environment:
+// HOME, XDG_CONFIG_HOME, XDG_STATE_HOME for filesystem locations, NO_COLOR
+// for ANSI suppression, and os.Executable for the self-path. Returns the
+// resolved Paths and Flags ready to pass into Run. Kept here (not in main)
+// so the wiring is unit-testable via os.Setenv in tests.
+func NewFromOS() (Paths, Flags, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return Paths{}, Flags{}, fmt.Errorf("cli: resolve self: %w", err)
+	}
+	paths := ResolvePaths(Env{
+		Home:          os.Getenv("HOME"),
+		XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"),
+		XDGStateHome:  os.Getenv("XDG_STATE_HOME"),
+		Self:          self,
+	})
+	flags := Flags{
+		NoColor: os.Getenv("NO_COLOR") != "",
+	}
+	return paths, flags, nil
 }
 
 // UnknownSubcommandError is returned for unrecognised subcommands so callers

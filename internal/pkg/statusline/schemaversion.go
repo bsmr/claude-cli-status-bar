@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/fileutil"
 )
 
 // schemaVersionStateFile is the basename of the state file that
@@ -48,32 +50,8 @@ func saveSchemaVersion(path, ver string) error {
 	if path == "" {
 		return errors.New("statusline: schema-version path empty")
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("statusline: mkdir state dir: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".schema_version-*.tmp")
-	if err != nil {
-		return fmt.Errorf("statusline: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("statusline: chmod: %w", err)
-	}
-	if _, err := tmp.WriteString(ver + "\n"); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("statusline: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("statusline: close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("statusline: rename: %w", err)
+	if err := fileutil.WriteAtomic(path, []byte(ver+"\n")); err != nil {
+		return fmt.Errorf("statusline: %w", err)
 	}
 	return nil
 }

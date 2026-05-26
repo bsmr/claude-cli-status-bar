@@ -16,10 +16,11 @@ package capture
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/fileutil"
 )
 
 const sessionPlaceholder = "unknown"
@@ -82,34 +83,9 @@ func writeFile(dir, name string, data []byte) (string, error) {
 	if dir == "" {
 		return "", errors.New("capture: empty dir")
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("capture: mkdir %s: %w", dir, err)
-	}
 	final := filepath.Join(dir, name)
-
-	tmp, err := os.CreateTemp(dir, ".capture-*.tmp")
-	if err != nil {
-		return "", fmt.Errorf("capture: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("capture: chmod: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("capture: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("capture: close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, final); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("capture: rename: %w", err)
+	if err := fileutil.WriteAtomic(final, data); err != nil {
+		return "", fmt.Errorf("capture: %w", err)
 	}
 	return final, nil
 }

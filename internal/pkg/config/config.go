@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/fileutil"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
@@ -84,39 +85,13 @@ func Save(path string, c Config) error {
 	if path == "" {
 		return errors.New("config: empty path")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("config: mkdir: %w", err)
-	}
-
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return fmt.Errorf("config: marshal: %w", err)
 	}
 	data = append(data, '\n')
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
-	if err != nil {
-		return fmt.Errorf("config: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("config: chmod: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("config: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("config: close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("config: rename: %w", err)
+	if err := fileutil.WriteAtomic(path, data); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
 }
