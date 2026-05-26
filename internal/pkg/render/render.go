@@ -269,6 +269,76 @@ type thinkF struct {
 	Enabled bool `json:"enabled"`
 }
 
+// parseErrors collects the parse failures detected by parsePayload when
+// the inbound JSON is unmarshalled in per-segment-isolated mode. The
+// segregation prevents one broken field from killing the rest of the
+// payload — only that field's segment loses its data.
+//
+//   - topLevel is non-nil when the raw bytes are not a JSON object at
+//     all (syntax error, top-level array, etc.). In that case
+//     fieldErrors is meaningless because no per-field unmarshal was
+//     attempted.
+//   - fieldErrors carries one entry per known top-level key whose
+//     individual unmarshal returned an error. A missing key is NOT an
+//     error — it lands in the payload as a zero-value, and the
+//     segment renderer hides itself based on its own data-presence
+//     check.
+type parseErrors struct {
+	topLevel    error
+	fieldErrors map[string]error
+}
+
+// hasIssue reports whether parsePayload saw any kind of trouble.
+// Used by detectSchemaIssue to decide whether the schema_health
+// indicator should fire.
+func (e parseErrors) hasIssue() bool {
+	return e.topLevel != nil || len(e.fieldErrors) > 0
+}
+
+// parsePayload unmarshals raw using per-segment isolation: the bytes
+// are first decoded into a map[string]json.RawMessage, then each
+// known top-level key is unmarshalled into its specific destination
+// field individually. A type error in one field stops at that field —
+// the rest of the payload still populates normally, and only the
+// broken segment loses its data.
+//
+// Missing top-level keys are left at the destination's zero value
+// and do NOT show up in fieldErrors; segment renderers hide
+// themselves on zero-value data via their own checks.
+func parsePayload(raw []byte) (payload, parseErrors) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return payload{}, parseErrors{topLevel: err}
+	}
+	var p payload
+	errs := parseErrors{}
+	field := func(key string, dst any) {
+		bytes, ok := top[key]
+		if !ok {
+			return
+		}
+		if err := json.Unmarshal(bytes, dst); err != nil {
+			if errs.fieldErrors == nil {
+				errs.fieldErrors = make(map[string]error)
+			}
+			errs.fieldErrors[key] = err
+		}
+	}
+	field("session_id", &p.SessionID)
+	field("session_name", &p.SessionName)
+	field("model", &p.Model)
+	field("workspace", &p.Workspace)
+	field("output_style", &p.OutputStyle)
+	field("effort", &p.Effort)
+	field("cost", &p.Cost)
+	field("context_window", &p.Context)
+	field("rate_limits", &p.Limits)
+	field("fast_mode", &p.FastMode)
+	field("thinking", &p.Thinking)
+	field("exceeds_200k_tokens", &p.Exceeds200kT)
+	return p, errs
+}
+
 // nowFunc returns the current time. Tests swap this for a fixed clock so
 // countdown formatting is deterministic.
 var nowFunc = time.Now
@@ -442,18 +512,13 @@ func displayWidth(s string) int {
 // hardcoded "<model> · <cwd>" so Claude Code never gets an empty
 // statusLine.
 func Render(opts Options, raw []byte) (string, error) {
-	var p payload
-	parseErr := json.Unmarshal(raw, &p)
-	if parseErr != nil {
-		// Reset p to zero — partial population on Unmarshal error is
-		// unreliable. Detection below still sees the failure via the
-		// parseErr, and the schema_health segment surfaces it. If the
-		// resulting row renders empty too (e.g. user config without
-		// schema_health), the empty-fallthrough below triggers
-		// lastResort with its relaxed second-pass parse.
-		p = payload{}
-	}
-	schemaIssue := detectSchemaIssue(&p, parseErr)
+	// Per-segment isolated parse: a type error in any one top-level
+	// field is contained — only that field's segment loses its data,
+	// the rest of the payload still renders. parseErrors carries both
+	// the top-level failure (if any) and the per-field failures so
+	// detectSchemaIssue can decide whether the indicator should fire.
+	p, parseErrs := parsePayload(raw)
+	schemaIssue := detectSchemaIssue(&p, parseErrs)
 
 	cfg := opts.Config
 	usingDefault := len(cfg.Rows) == 0
@@ -511,11 +576,11 @@ func Render(opts Options, raw []byte) (string, error) {
 		// every default segment hides when its data is missing.
 		// Fall through to the last-resort line so the bar is never
 		// blank. A user-supplied config that intentionally renders
-		// empty stays empty. When parseErr != nil the parsed p was
-		// reset to zero, so we pass nil to opt back into the relaxed
+		// empty stays empty. When the top-level parse failed, p is
+		// zero and we pass nil to opt back into the relaxed
 		// second-pass parse inside lastResort.
 		var lrPayload *payload
-		if parseErr == nil {
+		if parseErrs.topLevel == nil {
 			lrPayload = &p
 		}
 		return lastResort(opts, lrPayload, raw), nil
@@ -635,21 +700,24 @@ type renderEnv struct {
 	schemaIssue    bool   // true when the inbound payload looks broken; drives the schema_health segment
 }
 
-// detectSchemaIssue returns true when the inbound JSON payload looks broken
-// enough to warrant the visible "schema health" indicator. The bar is true
-// when either:
+// detectSchemaIssue returns true when the inbound JSON payload looks
+// broken enough to warrant the visible "schema health" indicator. It
+// fires when:
 //
-//   - the top-level JSON parse failed outright (parseErr != nil), or
-//   - one of the three critical fields ccsb always expects from Claude Code
-//     is empty: session_id, model.display_name, workspace.current_dir.
+//   - the top-level JSON parse failed outright (errs.topLevel != nil), or
+//   - one of the per-field unmarshals returned a type error
+//     (len(errs.fieldErrors) > 0) — a real schema regression that
+//     0.2.16's coarse top-level check could not see, and
+//   - one of the three critical fields ccsb always expects from Claude
+//     Code is empty: session_id, model.display_name,
+//     workspace.current_dir.
 //
-// Other expected fields (cost, rate_limits, context_window, …) are NOT
-// checked: they legitimately arrive empty during the first few status
-// updates of a session, so flagging them would produce false positives.
-// Later patches widen the check (per-segment isolation, doctor schema
-// command, drift logger).
-func detectSchemaIssue(p *payload, parseErr error) bool {
-	if parseErr != nil {
+// Optional fields that legitimately arrive empty during the first
+// status updates of a session (cost, rate_limits, context_window) are
+// still NOT checked here — they only contribute to detection when a
+// type error was seen.
+func detectSchemaIssue(p *payload, errs parseErrors) bool {
+	if errs.hasIssue() {
 		return true
 	}
 	if p.SessionID == "" || p.Model.DisplayName == "" || p.Workspace.CurrentDir == "" {

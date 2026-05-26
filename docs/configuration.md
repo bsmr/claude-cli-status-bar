@@ -609,12 +609,28 @@ Emits a single skull glyph (`☠` U+2620) when the renderer detects a
 schema issue, otherwise renders empty so the segment costs no palette
 slot and no chevron — completely invisible in the happy path.
 
-The detection is intentionally narrow to avoid false positives: it fires
-only when the top-level JSON parse fails outright, or when one of the
-three critical fields ccsb always expects is empty (`session_id`,
-`model.display_name`, `workspace.current_dir`). Optional fields like
-`rate_limits` or `cost` arriving empty during the first updates of a
-session do NOT trigger the indicator.
+The detection is intentionally narrow to avoid false positives. It
+fires when:
+
+- the top-level JSON parse fails outright (not an object), or
+- any per-field unmarshal returns a type error (a real schema
+  regression — see *per-segment isolation* below), or
+- one of the three critical fields ccsb always expects is empty
+  (`session_id`, `model.display_name`, `workspace.current_dir`).
+
+Optional fields like `rate_limits` or `cost` arriving empty during
+the first updates of a session do NOT trigger the indicator — only
+a type mismatch on those fields does.
+
+The payload is parsed in **per-segment-isolated** mode (introduced in
+0.2.17): the raw bytes are first decoded into a top-level
+`map[string]json.RawMessage`, then each known key is unmarshalled
+into its specific destination field individually. A type error in
+one field stops at that field — the rest of the payload still
+populates normally, and only the broken segment loses its data while
+`schema_health` surfaces the issue. This is the mechanism that lets
+e.g. a broken `cost` field hide just the cost segment while
+`context_window` and `rate_limits` continue to render.
 
 Default placement (in the built-in `defaultConfig`) is the right edge
 of row 1 with a dark-red alarm block:
