@@ -38,3 +38,6 @@ go.work.sum
 # Brainstorming visual-companion session artifacts
 .superpowers/
 
+# Claude Code local settings
+.claude/
+
