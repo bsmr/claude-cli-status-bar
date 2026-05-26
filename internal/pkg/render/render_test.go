@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2389,5 +2390,124 @@ func TestExpectedPayloadKeys_MatchesParsePayload(t *testing.T) {
 	// Sanity: the list must not be empty (would defeat the purpose).
 	if len(expectedPayloadKeys) < 5 {
 		t.Errorf("expectedPayloadKeys is suspiciously short (%d), did someone delete entries?", len(expectedPayloadKeys))
+	}
+}
+
+// --- Diagnose ---------------------------------------------------------------
+
+func TestDiagnose_ValidPayloadNoIssue(t *testing.T) {
+	raw := []byte(`{"session_id":"s","model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`)
+	d := Diagnose(raw)
+	if d.Issue() {
+		t.Errorf("valid payload must not trip Issue(): %+v", d)
+	}
+	if d.TopLevelError != nil || len(d.FieldErrors) > 0 || len(d.MissingCritical) > 0 {
+		t.Errorf("expected clean diagnostic, got %+v", d)
+	}
+}
+
+func TestDiagnose_TopLevelError(t *testing.T) {
+	d := Diagnose([]byte("not json"))
+	if d.TopLevelError == nil {
+		t.Error("expected TopLevelError set")
+	}
+	if !d.Issue() {
+		t.Error("top-level error must trip Issue()")
+	}
+	if len(d.FieldErrors) > 0 || len(d.MissingCritical) > 0 || len(d.AdditiveKeys) > 0 {
+		t.Errorf("only TopLevelError should be set, got %+v", d)
+	}
+}
+
+func TestDiagnose_FieldError(t *testing.T) {
+	raw := []byte(`{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"},"cost":{"total_cost_usd":"BROKEN"}}`)
+	d := Diagnose(raw)
+	if _, ok := d.FieldErrors["cost"]; !ok {
+		t.Errorf("expected FieldErrors[cost], got %+v", d.FieldErrors)
+	}
+	if !d.Issue() {
+		t.Error("field error must trip Issue()")
+	}
+}
+
+func TestDiagnose_MissingCritical(t *testing.T) {
+	// Only model is present; session_id and workspace.current_dir missing.
+	raw := []byte(`{"model":{"display_name":"Opus"}}`)
+	d := Diagnose(raw)
+	if !slices.Contains(d.MissingCritical, "session_id") {
+		t.Errorf("expected session_id in MissingCritical, got %v", d.MissingCritical)
+	}
+	if !slices.Contains(d.MissingCritical, "workspace.current_dir") {
+		t.Errorf("expected workspace.current_dir in MissingCritical, got %v", d.MissingCritical)
+	}
+	if slices.Contains(d.MissingCritical, "model.display_name") {
+		t.Errorf("model.display_name should NOT be in MissingCritical: %v", d.MissingCritical)
+	}
+	if !d.Issue() {
+		t.Error("missing critical must trip Issue()")
+	}
+}
+
+func TestDiagnose_AdditiveKeysDoNotTripIssue(t *testing.T) {
+	// All critical fields present; one additive key. Issue() must
+	// stay false — additive keys are informational.
+	raw := []byte(`{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"},"shiny_new":1}`)
+	d := Diagnose(raw)
+	if d.Issue() {
+		t.Errorf("additive key alone must not trip Issue(): %+v", d)
+	}
+	if !slices.Contains(d.AdditiveKeys, "shiny_new") {
+		t.Errorf("expected shiny_new in AdditiveKeys, got %v", d.AdditiveKeys)
+	}
+}
+
+func TestDiagnose_AdditiveKeysSortedDeterministically(t *testing.T) {
+	raw := []byte(`{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"},"zeta":1,"alpha":2,"middle":3}`)
+	d := Diagnose(raw)
+	want := []string{"alpha", "middle", "zeta"}
+	if !slices.Equal(d.AdditiveKeys, want) {
+		t.Errorf("AdditiveKeys not sorted: got %v want %v", d.AdditiveKeys, want)
+	}
+}
+
+func TestDiagnostic_Format_TopLevelErrorShortCircuits(t *testing.T) {
+	d := Diagnose([]byte("not json"))
+	out := string(d.Format())
+	if !strings.Contains(out, "top-level parse error") {
+		t.Errorf("Format must mention top-level parse error: %q", out)
+	}
+}
+
+func TestDiagnostic_Format_IncludesAllSections(t *testing.T) {
+	raw := []byte(`{
+		"model": {"display_name": "Opus"},
+		"workspace": {"current_dir": "/x"},
+		"cost": {"total_cost_usd": "BROKEN"},
+		"newly_added": 1
+	}`) // session_id missing + cost broken + additive key
+	d := Diagnose(raw)
+	out := string(d.Format())
+	for _, want := range []string{
+		"missing critical fields",
+		"session_id",
+		"per-field parse errors",
+		"cost:",
+		"additive keys",
+		"newly_added",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Format output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDiagnostic_Format_HealthyPayloadStillEmitsHeader(t *testing.T) {
+	// Caller usually checks Issue() before Format() — but Format on a
+	// healthy diagnostic must not panic and should still produce the
+	// header line so the file is identifiable.
+	raw := []byte(`{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"}}`)
+	out := string(Diagnose(raw).Format())
+	if !strings.HasPrefix(out, "ccsb schema diagnostic") {
+		t.Errorf("Format output should start with the header line, got %q", out)
 	}
 }

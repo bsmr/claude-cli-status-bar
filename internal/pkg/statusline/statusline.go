@@ -90,6 +90,18 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		if _, cerr := capture.Save(opts.CaptureDir, p.SessionID, raw, now); cerr != nil {
 			fmt.Fprintf(stderr, "ccsb: capture: %s\n", cerr)
 		}
+		// Schema-drift logger: if the inbound payload trips ccsb's
+		// schema-health detection, write a human-readable diagnostic
+		// next to the capture as a .diag file. The file shares the
+		// basename with the .json/.out/.err siblings so readers can
+		// pair them. Skipped silently when the payload looks healthy
+		// to keep the capture dir uncluttered.
+		diag := render.Diagnose(raw)
+		if diag.Issue() {
+			if _, cerr := capture.SaveOutput(opts.CaptureDir, p.SessionID, diag.Format(), now, "diag"); cerr != nil {
+				fmt.Fprintf(stderr, "ccsb: capture diag: %s\n", cerr)
+			}
+		}
 	}
 
 	// Tee stdout/stderr through buffers so the rendered output can be saved

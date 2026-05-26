@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -378,6 +379,109 @@ func parsePayload(raw []byte) (payload, parseErrors) {
 	field("thinking", &p.Thinking)
 	field("exceeds_200k_tokens", &p.Exceeds200kT)
 	return p, errs
+}
+
+// Diagnostic summarises everything ccsb noticed about a raw inbound
+// JSON payload: top-level parse trouble, per-field unmarshal errors,
+// missing critical fields, and additive top-level keys ccsb does not
+// (yet) consume. It is the public face of the schema-robustness
+// ladder — fed by parsePayload and consumed by schema_health, ccsb
+// doctor, and the 0.2.19 drift logger.
+type Diagnostic struct {
+	// TopLevelError is non-nil when the bytes are not a JSON object.
+	// All other fields are zero in that case because no per-field
+	// inspection could run.
+	TopLevelError error
+	// FieldErrors carries per-field unmarshal errors keyed by the
+	// top-level JSON key.
+	FieldErrors map[string]error
+	// MissingCritical lists the three always-required fields that
+	// came in empty: "session_id", "model.display_name",
+	// "workspace.current_dir".
+	MissingCritical []string
+	// AdditiveKeys are top-level JSON keys present in the payload
+	// that ccsb does not know about. Informational only — does NOT
+	// count as Issue() so that harmless schema evolution (Claude
+	// Code growing a new field) does not trigger the schema_health
+	// indicator. ccsb doctor surfaces these as "additive keys"; the
+	// drift logger includes them in .diag for traceability.
+	AdditiveKeys []string
+}
+
+// Diagnose inspects raw and returns everything notable about its
+// shape relative to ccsb's renderer expectations.
+func Diagnose(raw []byte) Diagnostic {
+	p, errs := parsePayload(raw)
+	d := Diagnostic{
+		TopLevelError: errs.topLevel,
+		FieldErrors:   errs.fieldErrors,
+	}
+	if errs.topLevel != nil {
+		return d
+	}
+	if p.SessionID == "" {
+		d.MissingCritical = append(d.MissingCritical, "session_id")
+	}
+	if p.Model.DisplayName == "" {
+		d.MissingCritical = append(d.MissingCritical, "model.display_name")
+	}
+	if p.Workspace.CurrentDir == "" {
+		d.MissingCritical = append(d.MissingCritical, "workspace.current_dir")
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err == nil {
+		expected := make(map[string]bool, len(expectedPayloadKeys))
+		for _, k := range expectedPayloadKeys {
+			expected[k] = true
+		}
+		for k := range top {
+			if !expected[k] {
+				d.AdditiveKeys = append(d.AdditiveKeys, k)
+			}
+		}
+		sort.Strings(d.AdditiveKeys)
+	}
+	return d
+}
+
+// Issue reports whether the diagnostic represents a real schema
+// problem worth flagging via the schema_health indicator and worth
+// logging as a .diag file. AdditiveKeys deliberately do NOT count —
+// they describe harmless schema evolution, not breakage.
+func (d Diagnostic) Issue() bool {
+	return d.TopLevelError != nil || len(d.FieldErrors) > 0 || len(d.MissingCritical) > 0
+}
+
+// Format renders the diagnostic as plain text for human inspection.
+// The 0.2.19 drift logger writes this output next to the matching
+// capture as a .diag file when Issue() is true. The format is
+// stable line-oriented text — easy to grep, paste into bug
+// reports, or diff between captures.
+func (d Diagnostic) Format() []byte {
+	var b strings.Builder
+	b.WriteString("ccsb schema diagnostic\n")
+	if d.TopLevelError != nil {
+		fmt.Fprintf(&b, "top-level parse error: %s\n", d.TopLevelError)
+		return []byte(b.String())
+	}
+	if len(d.MissingCritical) > 0 {
+		fmt.Fprintf(&b, "missing critical fields: %s\n", strings.Join(d.MissingCritical, ", "))
+	}
+	if len(d.FieldErrors) > 0 {
+		keys := make([]string, 0, len(d.FieldErrors))
+		for k := range d.FieldErrors {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		b.WriteString("per-field parse errors:\n")
+		for _, k := range keys {
+			fmt.Fprintf(&b, "  %s: %s\n", k, d.FieldErrors[k])
+		}
+	}
+	if len(d.AdditiveKeys) > 0 {
+		fmt.Fprintf(&b, "additive keys: %s\n", strings.Join(d.AdditiveKeys, ", "))
+	}
+	return []byte(b.String())
 }
 
 // nowFunc returns the current time. Tests swap this for a fixed clock so

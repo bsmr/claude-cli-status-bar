@@ -482,3 +482,86 @@ func (r neverEndingReader) Read(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// --- 0.2.19 schema-drift logger (.diag files) ------------------------------
+
+func TestRun_WritesDiagFileWhenSchemaIssue(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	// Missing session_id and workspace.current_dir — trips MissingCritical.
+	body := `{"model":{"display_name":"Opus"}}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: dir, NoColor: true}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	var diagPath string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".diag") {
+			diagPath = filepath.Join(dir, e.Name())
+		}
+	}
+	if diagPath == "" {
+		t.Fatalf("expected a .diag file in capture dir, got entries:\n%v", entries)
+	}
+	got, err := os.ReadFile(diagPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(got), "missing critical fields") {
+		t.Errorf(".diag content should mention missing critical fields:\n%s", got)
+	}
+	if !strings.Contains(string(got), "session_id") {
+		t.Errorf(".diag content should name the specific missing field:\n%s", got)
+	}
+}
+
+func TestRun_NoDiagFileOnValidPayload(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	body := `{"session_id":"sid","model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"}}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: dir, NoColor: true}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".diag") {
+			t.Errorf("no .diag file should appear for a healthy payload, found %s", e.Name())
+		}
+	}
+}
+
+func TestRun_DiagFileSharesBasenameWithCapture(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	body := `{"model":{"display_name":"Opus"}}` // missing critical → diag fires
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: dir, NoColor: true}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	var jsonName, diagName string
+	for _, e := range entries {
+		switch {
+		case strings.HasSuffix(e.Name(), ".json"):
+			jsonName = e.Name()
+		case strings.HasSuffix(e.Name(), ".diag"):
+			diagName = e.Name()
+		}
+	}
+	if jsonName == "" || diagName == "" {
+		t.Fatalf("need both .json and .diag, got json=%q diag=%q", jsonName, diagName)
+	}
+	jsonStem := strings.TrimSuffix(jsonName, ".json")
+	diagStem := strings.TrimSuffix(diagName, ".diag")
+	if jsonStem != diagStem {
+		t.Errorf("basenames must match for pairing: json=%s diag=%s", jsonStem, diagStem)
+	}
+}
