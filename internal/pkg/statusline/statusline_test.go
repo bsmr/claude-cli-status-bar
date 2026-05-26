@@ -565,3 +565,128 @@ func TestRun_DiagFileSharesBasenameWithCapture(t *testing.T) {
 		t.Errorf("basenames must match for pairing: json=%s diag=%s", jsonStem, diagStem)
 	}
 }
+
+// --- 0.2.20 schema-version acknowledge -------------------------------------
+
+// schemaVersionTestEnv prepares a capture directory plus its sibling
+// state file location, so the schema_version tests do not have to
+// duplicate the layout. Returns (captureDir, stateDir) where
+// stateDir is the parent that schemaVersionStatePath() derives.
+func schemaVersionTestEnv(t *testing.T) (captureDir, stateFile string) {
+	t.Helper()
+	root := t.TempDir()
+	captureDir = filepath.Join(root, "captures")
+	if err := os.MkdirAll(captureDir, 0o700); err != nil {
+		t.Fatalf("mkdir captureDir: %v", err)
+	}
+	stateFile = filepath.Join(root, "schema_version")
+	return captureDir, stateFile
+}
+
+func TestRun_SchemaVersionFirstSeenIsRecordedSilently(t *testing.T) {
+	ctx := context.Background()
+	captureDir, statePath := schemaVersionTestEnv(t)
+	body := `{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"},"schema_version":"1.0"}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: captureDir, NoColor: true}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("expected state file written, ReadFile: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "1.0" {
+		t.Errorf("state file content = %q, want %q", got, "1.0")
+	}
+	entries, _ := os.ReadDir(captureDir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".diag") {
+			t.Errorf("first-seen schema_version must not trigger a .diag, got %s", e.Name())
+		}
+	}
+}
+
+func TestRun_SchemaVersionUnchangedIsNoop(t *testing.T) {
+	ctx := context.Background()
+	captureDir, statePath := schemaVersionTestEnv(t)
+	if err := os.WriteFile(statePath, []byte("1.0\n"), 0o600); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	body := `{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"},"schema_version":"1.0"}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: captureDir, NoColor: true}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, _ := os.ReadDir(captureDir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".diag") {
+			t.Errorf("unchanged schema_version must not trigger a .diag, got %s", e.Name())
+		}
+	}
+}
+
+func TestRun_SchemaVersionChangeTriggersDiagWithFooter(t *testing.T) {
+	ctx := context.Background()
+	captureDir, statePath := schemaVersionTestEnv(t)
+	if err := os.WriteFile(statePath, []byte("1.0\n"), 0o600); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	// Healthy payload otherwise — only the version differs.
+	body := `{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"},"schema_version":"2.0"}`
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: captureDir, NoColor: true}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// .diag must exist and mention the transition.
+	entries, _ := os.ReadDir(captureDir)
+	var diagPath string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".diag") {
+			diagPath = filepath.Join(captureDir, e.Name())
+		}
+	}
+	if diagPath == "" {
+		t.Fatalf("expected a .diag file for schema_version change")
+	}
+	got, err := os.ReadFile(diagPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(got), "schema_version changed: 1.0 -> 2.0") {
+		t.Errorf(".diag should announce the transition, got:\n%s", got)
+	}
+
+	// State file updated to the new value.
+	stateGot, _ := os.ReadFile(statePath)
+	if strings.TrimSpace(string(stateGot)) != "2.0" {
+		t.Errorf("state should be updated to 2.0, got %q", stateGot)
+	}
+}
+
+func TestRun_SchemaVersionMissingDoesNotEraseState(t *testing.T) {
+	// If a later payload drops schema_version (downgrade or upstream
+	// regression), the previously stored value must persist so the
+	// next reappearance can still be diffed against it.
+	ctx := context.Background()
+	captureDir, statePath := schemaVersionTestEnv(t)
+	if err := os.WriteFile(statePath, []byte("1.0\n"), 0o600); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	body := `{"session_id":"s","model":{"display_name":"O"},"workspace":{"current_dir":"/x"}}` // no schema_version
+	var out, errOut bytes.Buffer
+
+	if err := statusline.Run(ctx, statusline.Options{CaptureDir: captureDir, NoColor: true}, strings.NewReader(body), &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	stateGot, _ := os.ReadFile(statePath)
+	if strings.TrimSpace(string(stateGot)) != "1.0" {
+		t.Errorf("state should remain at 1.0 when payload omits schema_version, got %q", stateGot)
+	}
+}

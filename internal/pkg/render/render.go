@@ -213,18 +213,19 @@ type Options struct {
 // stay grep-distinct from any future public domain types and are clearly
 // JSON-shape carriers, not domain models.
 type payload struct {
-	SessionID    string    `json:"session_id"`
-	SessionName  string    `json:"session_name"`
-	Model        modelF    `json:"model"`
-	Workspace    workspace `json:"workspace"`
-	OutputStyle  outputF   `json:"output_style"`
-	Effort       effortF   `json:"effort"`
-	Cost         costF     `json:"cost"`
-	Context      contextF  `json:"context_window"`
-	Limits       limitsF   `json:"rate_limits"`
-	FastMode     bool      `json:"fast_mode"`
-	Thinking     thinkF    `json:"thinking"`
-	Exceeds200kT bool      `json:"exceeds_200k_tokens"`
+	SessionID     string    `json:"session_id"`
+	SessionName   string    `json:"session_name"`
+	Model         modelF    `json:"model"`
+	Workspace     workspace `json:"workspace"`
+	OutputStyle   outputF   `json:"output_style"`
+	Effort        effortF   `json:"effort"`
+	Cost          costF     `json:"cost"`
+	Context       contextF  `json:"context_window"`
+	Limits        limitsF   `json:"rate_limits"`
+	FastMode      bool      `json:"fast_mode"`
+	Thinking      thinkF    `json:"thinking"`
+	Exceeds200kT  bool      `json:"exceeds_200k_tokens"`
+	SchemaVersion string    `json:"schema_version"`
 }
 
 type modelF struct {
@@ -321,6 +322,7 @@ var expectedPayloadKeys = []string{
 	"fast_mode",
 	"thinking",
 	"exceeds_200k_tokens",
+	"schema_version",
 }
 
 // ExpectedPayloadKeys returns a fresh copy of the top-level JSON keys
@@ -378,7 +380,23 @@ func parsePayload(raw []byte) (payload, parseErrors) {
 	field("fast_mode", &p.FastMode)
 	field("thinking", &p.Thinking)
 	field("exceeds_200k_tokens", &p.Exceeds200kT)
+	field("schema_version", &p.SchemaVersion)
 	return p, errs
+}
+
+// SchemaVersionOf extracts payload.schema_version from raw without
+// running the full parsePayload (which fails fast on a top-level
+// non-object). It is exported so statusline can persist and diff
+// the value across invocations without re-implementing the parse.
+//
+// Returns "" when raw is not a JSON object or the field is absent
+// or empty.
+func SchemaVersionOf(raw []byte) string {
+	var loose struct {
+		SchemaVersion string `json:"schema_version"`
+	}
+	_ = json.Unmarshal(raw, &loose)
+	return loose.SchemaVersion
 }
 
 // Diagnostic summarises everything ccsb noticed about a raw inbound

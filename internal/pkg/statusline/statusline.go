@@ -90,16 +90,35 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		if _, cerr := capture.Save(opts.CaptureDir, p.SessionID, raw, now); cerr != nil {
 			fmt.Fprintf(stderr, "ccsb: capture: %s\n", cerr)
 		}
-		// Schema-drift logger: if the inbound payload trips ccsb's
-		// schema-health detection, write a human-readable diagnostic
-		// next to the capture as a .diag file. The file shares the
-		// basename with the .json/.out/.err siblings so readers can
-		// pair them. Skipped silently when the payload looks healthy
-		// to keep the capture dir uncluttered.
+		// Schema-drift logger + schema-version acknowledge. A .diag
+		// file is written when either the payload trips the
+		// schema-health detection, OR the schema_version value the
+		// payload reports changed since the last time ccsb saw one.
+		// Healthy + same-version captures produce no .diag.
 		diag := render.Diagnose(raw)
-		if diag.Issue() {
-			if _, cerr := capture.SaveOutput(opts.CaptureDir, p.SessionID, diag.Format(), now, "diag"); cerr != nil {
+		statePath := schemaVersionStatePath(opts.CaptureDir)
+		prevVer := loadSchemaVersion(statePath)
+		curVer := render.SchemaVersionOf(raw)
+		versionChanged := prevVer != "" && curVer != "" && prevVer != curVer
+
+		if diag.Issue() || versionChanged {
+			content := diag.Format()
+			if versionChanged {
+				content = append(content, []byte(fmt.Sprintf("schema_version changed: %s -> %s\n", prevVer, curVer))...)
+			}
+			if _, cerr := capture.SaveOutput(opts.CaptureDir, p.SessionID, content, now, "diag"); cerr != nil {
 				fmt.Fprintf(stderr, "ccsb: capture diag: %s\n", cerr)
+			}
+		}
+
+		// Persist the current schema_version when it differs from
+		// what we stored. The first sighting (prev == "") also
+		// initialises the state file so subsequent changes can be
+		// detected; a missing schema_version on a later invocation
+		// (e.g. a downgrade) does NOT erase the stored value.
+		if curVer != "" && curVer != prevVer {
+			if err := saveSchemaVersion(statePath, curVer); err != nil {
+				fmt.Fprintf(stderr, "ccsb: schema-version state: %s\n", err)
 			}
 		}
 	}

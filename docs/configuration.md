@@ -659,6 +659,15 @@ unmarshal errors, and the list of additive keys spotted on the side.
 Healthy captures produce no `.diag` file, so the capture dir stays
 uncluttered.
 
+ccsb also remembers the last `schema_version` value the upstream
+payload reported in `$XDG_STATE_HOME/ccsb/schema_version` (sibling
+of the `captures/` directory, 0o600 user-private). A change in that
+value triggers a `.diag` entry even when the payload is otherwise
+healthy — useful to spot the moment Claude Code rolls out a payload
+schema bump. The state file is initialised silently on first sight
+of a `schema_version` value; payloads that omit the field do not
+erase the stored value.
+
 ## Colors
 
 Foreground and background use ANSI 256-color codes as decimal strings in
