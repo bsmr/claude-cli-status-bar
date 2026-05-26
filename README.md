@@ -6,14 +6,15 @@ statusLine implementation as a transparent proxy, captures every payload Claude
 Code sends so it can be inspected later, and is meant to grow into a
 self-contained renderer that drops the `npx` / Node round-trip on every update.
 
-> **Status:** active development — `0.2.11`. Proxy mode, capture, hook
+> **Status:** active development — `0.2.14`. Proxy mode, capture, hook
 > management, a configurable Powerline-aware native renderer with a
 > full out-of-the-box default layout, terminal-size detection, row- and
-> per-segment right-alignment, and a `ccsb mode` subcommand to switch
-> between proxy and native rendering are all functional. `ccsb install`
-> defaults to native mode when the previous `statusLine` was the
-> canonical `npx -y ccstatusline@latest`; otherwise it seeds proxy mode
-> so the prior renderer keeps working.
+> per-segment right-alignment, per-segment configurable bar widths,
+> and a `ccsb mode` subcommand to switch between proxy and native
+> rendering are all functional. `ccsb install` defaults to native mode
+> when the previous `statusLine` was the canonical
+> `npx -y ccstatusline@latest`; otherwise it seeds proxy mode so the
+> prior renderer keeps working.
 
 ## What it does
 
@@ -42,12 +43,26 @@ self-contained renderer that drops the `npx` / Node round-trip on every update.
 
 ## Build
 
+The Go module path is `go.muehmer.eu/claude-cli-status-bar`. A vanity
+URL pointing at the public mirror on GitHub is planned; until it is
+in place, build from source:
+
 ```bash
-git clone ssh://git@git.nebula.muehmer.eu/bsmr/claude-cli-status-bar.git
+git clone https://github.com/bsmr/claude-cli-status-bar.git
 cd claude-cli-status-bar
+go install ./cmd/ccsb                          # installs to $GOBIN or ~/go/bin
+# or build a local artifact:
 go build -o bin/ccsb ./cmd/ccsb
-install -m 0755 bin/ccsb ~/.local/bin/ccsb   # or anywhere on $PATH
+install -m 0755 bin/ccsb ~/.local/bin/ccsb     # or anywhere on $PATH
 ```
+
+Once the vanity URL is up, `go install go.muehmer.eu/claude-cli-status-bar/cmd/ccsb@vX.Y.Z`
+will resolve directly without cloning.
+
+The version segment reads its string from `runtime/debug.ReadBuildInfo()`:
+a binary built from a checked-out tag reports that tag (`v0.2.14`), an
+untagged commit reports `(devel)`. Check out the tag you want shipped if
+you care about the version stamp.
 
 Requires Go 1.26 or newer.
 
@@ -100,11 +115,14 @@ section and the full segment vocabulary are documented in
   configurable native renderer, and the `ccsb mode` subcommand.
 - **0.2.x** — Powerline rendering with row-bg fill, chevron transitions,
   opt-in end caps, terminal-size detection, version segment with
-  auto-detect via `runtime/debug.ReadBuildInfo()`, right-alignment at
-  both row and per-segment level, and a full Powerline default layout
-  that ships out of the box when no config file exists.
-- **Next** — `max_width` truncation and `min_cols` conditional include
-  for narrower terminals. Otherwise the 0.2.x surface is stable.
+  auto-detect via `runtime/debug.ReadBuildInfo()`, row- and per-segment
+  right-alignment, a full Powerline default layout that ships out of the
+  box, and per-segment configurable bar widths for percentage-bearing
+  segments.
+- **Next** — `max_width` truncation, `min_cols` conditional include,
+  responsive row overflow, an in-code default-config refresh, a
+  `ccsb config reset` subcommand, and a GoReleaser-based release
+  pipeline producing cross-platform binaries on GitHub Releases.
 
 ## Develop
 
