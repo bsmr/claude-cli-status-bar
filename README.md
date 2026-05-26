@@ -8,7 +8,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** active development — `0.2.23`. The native renderer is the
+> **Status:** active development — `0.2.24`. The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
@@ -146,9 +146,10 @@ section and the full segment vocabulary are documented in
   schema-robustness ladder (per-segment isolated parsing, `.diag`
   drift logger, `ccsb doctor` schema-check, persistent
   `schema_version` tracking).
-- **Next** — one layout primitive still open: `min_cols` conditional
-  include (segment is hidden when the terminal is narrower than its
-  declared threshold).
+- **Next** — all three terminal-aware layout primitives shipped
+  (reflow + `max_width` + `min_cols`). The remaining roadmap item is
+  the GoReleaser-based release pipeline for cross-platform binaries
+  on GitHub Releases.
 - **Later** — a GoReleaser-based release pipeline producing
   cross-platform binaries on GitHub Releases.
 

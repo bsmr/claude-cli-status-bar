@@ -2796,3 +2796,90 @@ func TestRender_MaxWidthAppliesToGitBranchToo(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "feature/v…")
 	}
 }
+
+// --- 0.2.24 min_cols conditional include -----------------------------------
+
+func TestRender_MinColsHidesSegmentOnNarrowTerminal(t *testing.T) {
+	cfg := Config{
+		Width:  60, // tty narrower than the segment's threshold
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "B", MinCols: 80},
+			{Type: "text", Label: "C"},
+		}}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(got, "B") {
+		t.Errorf("MinCols=80 on a 60-col tty must hide the segment, got %q", got)
+	}
+	if !strings.Contains(got, "A") || !strings.Contains(got, "C") {
+		t.Errorf("only the gated segment should disappear, got %q", got)
+	}
+	// And no double separator either — the hidden segment must also
+	// drop its surrounding chevron / separator, just like an empty
+	// segment does.
+	if strings.Contains(got, "|  |") {
+		t.Errorf("hidden segment must not leave a dangling separator: %q", got)
+	}
+}
+
+func TestRender_MinColsKeepsSegmentOnWideTerminal(t *testing.T) {
+	cfg := Config{
+		Width:  200,
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "A"},
+			{Type: "text", Label: "TOKENS", MinCols: 80},
+		}}},
+	}
+	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if !strings.Contains(got, "TOKENS") {
+		t.Errorf("MinCols=80 on a 200-col tty must keep the segment, got %q", got)
+	}
+}
+
+func TestRender_MinColsBoundaryIsInclusive(t *testing.T) {
+	// MinCols=80, ttyCols=80 → segment stays (gate fires only when
+	// ttyCols is strictly less than MinCols).
+	cfg := Config{
+		Width:  80,
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "X", MinCols: 80},
+		}}},
+	}
+	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if !strings.Contains(got, "X") {
+		t.Errorf("ttyCols == MinCols must keep the segment, got %q", got)
+	}
+}
+
+func TestRender_MinColsIgnoredWhenTtyColsUnknown(t *testing.T) {
+	// Direct renderSegment unit test with env.ttyCols=0 explicitly:
+	// Render() goes through discoverTermSize which may pick up a
+	// real /dev/tty width in the test environment, so we exercise
+	// the gate at the level it actually fires.
+	s := Segment{Type: "text", Label: "Y", MinCols: 10000}
+	got := renderSegment(&payload{}, s, renderEnv{ttyCols: 0, colorEnabled: false})
+	if got != "Y" {
+		t.Errorf("MinCols on ttyCols=0 must be a no-op, got %q", got)
+	}
+}
+
+func TestRender_MinColsZeroIsDisabled(t *testing.T) {
+	cfg := Config{
+		Width:  10,
+		Margin: intPtr(0),
+		Rows: []Row{{Segments: []Segment{
+			{Type: "text", Label: "Z", MinCols: 0},
+		}}},
+	}
+	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if !strings.Contains(got, "Z") {
+		t.Errorf("MinCols=0 must not gate the segment, got %q", got)
+	}
+}
