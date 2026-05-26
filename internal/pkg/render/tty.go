@@ -1,3 +1,10 @@
+//go:build !windows
+
+// Unix-side terminal-size detection. The /dev/tty open + TIOCGWINSZ
+// ioctl and the /proc parent-chain walk are Linux/Darwin/BSD features;
+// Windows uses the stub in tty_windows.go which always reports an
+// unknown size unless cfg.Width is set explicitly.
+
 package render
 
 import (

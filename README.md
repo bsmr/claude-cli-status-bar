@@ -8,7 +8,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** active development — `0.2.25`. The native renderer is the
+> **Status:** active development — `0.2.26`. The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
@@ -160,8 +160,8 @@ section and the full segment vocabulary are documented in
   cross-platform binaries and publishes a Release; every push or PR
   runs `go vet`, `go test -race -cover`, and `gofmt`.
 - **0.3.x** — major new directions, opened once 0.2.x is closed
-  with the planned hygiene patches (proxy-flake fix in 0.2.26,
-  lint-cleanup in 0.2.27).
+  with the planned hygiene patches (proxy-flake fix + Windows
+  build tags in 0.2.26, lint-cleanup in 0.2.27).
 - **Later** — a GoReleaser-based release pipeline producing
   cross-platform binaries on GitHub Releases.
 

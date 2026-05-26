@@ -95,13 +95,6 @@ func TestRun_NonexistentCommandReturnsError(t *testing.T) {
 }
 
 func TestRun_RespectsContextCancellation(t *testing.T) {
-	// TODO(0.2.26): the production path in proxy.Run currently waits
-	// up to ~5 s for the child to terminate after context cancel.
-	// Either the test is too strict for the current implementation
-	// or proxy.Run needs a faster cancel path (SIGKILL after a short
-	// grace period). Tracked for the 0.2.26 fix patch; skipped here
-	// so CI stays green for the 0.2.25 release-pipeline rollout.
-	t.Skip("pre-existing flake — see TODO above; tracked for 0.2.26")
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
