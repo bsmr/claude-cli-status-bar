@@ -207,6 +207,16 @@ type Segment struct {
 	// at 0 — truncating across an embedded escape can leave the
 	// terminal in an unintended SGR state.
 	MaxWidth int `json:"max_width,omitempty"`
+
+	// MinCols, when positive, suppresses this segment when the
+	// detected terminal width is narrower than MinCols. The hidden
+	// segment behaves exactly like an empty render: no body, no
+	// chevron, no palette slot. The gate runs before the segment
+	// function fires, so hidden segments cost nothing. When the
+	// terminal width is unknown (ttyCols == 0) MinCols is ignored —
+	// "no info to gate on" defaults to "keep the segment". Zero
+	// (the default) and negative values disable the gate.
+	MinCols int `json:"min_cols,omitempty"`
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage
@@ -1037,6 +1047,13 @@ func detectSchemaIssue(p *payload, errs parseErrors) bool {
 // short-circuit to "" so they neither contribute to the row nor emit
 // styling escapes for an invisible payload.
 func renderSegment(p *payload, s Segment, env renderEnv) string {
+	// MinCols gate runs first — a suppressed segment costs nothing
+	// (no body, no chevron, no palette slot). When ttyCols is unknown
+	// the gate is bypassed so we never hide a segment based on
+	// guesswork.
+	if s.MinCols > 0 && env.ttyCols > 0 && env.ttyCols < s.MinCols {
+		return ""
+	}
 	fn, ok := segmentFuncs[s.Type]
 	if !ok {
 		return "?" + s.Type + "?"
