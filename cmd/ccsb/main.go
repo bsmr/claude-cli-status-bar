@@ -32,21 +32,9 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	self, err := os.Executable()
+	paths, flags, err := cli.NewFromOS()
 	if err != nil {
-		return fmt.Errorf("resolve self: %w", err)
+		return err
 	}
-
-	paths := cli.ResolvePaths(cli.Env{
-		Home:          os.Getenv("HOME"),
-		XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"),
-		XDGStateHome:  os.Getenv("XDG_STATE_HOME"),
-		Self:          self,
-	})
-
-	flags := cli.Flags{
-		NoColor: os.Getenv("NO_COLOR") != "",
-	}
-
 	return cli.Run(ctx, paths, flags, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 }

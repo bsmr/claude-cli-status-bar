@@ -412,6 +412,48 @@ func TestResolvePaths_PrefersXDGOverHomeDefaults(t *testing.T) {
 	}
 }
 
+func TestNewFromOS_ResolvesXDGAndNoColor(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	t.Setenv("XDG_CONFIG_HOME", "/etc/xdg")
+	t.Setenv("XDG_STATE_HOME", "/var/state")
+	t.Setenv("NO_COLOR", "1")
+
+	paths, flags, err := cli.NewFromOS()
+	if err != nil {
+		t.Fatalf("NewFromOS: %v", err)
+	}
+	if paths.Config != filepath.Join("/etc/xdg", "ccsb", "config.json") {
+		t.Errorf("Config: got %q", paths.Config)
+	}
+	if paths.Capture != filepath.Join("/var/state", "ccsb", "captures") {
+		t.Errorf("Capture: got %q", paths.Capture)
+	}
+	if paths.Settings != filepath.Join("/home/u", ".claude", "settings.json") {
+		t.Errorf("Settings: got %q", paths.Settings)
+	}
+	if paths.Self == "" {
+		t.Errorf("Self: empty (os.Executable should resolve in tests)")
+	}
+	if !flags.NoColor {
+		t.Errorf("Flags.NoColor: want true (NO_COLOR=1)")
+	}
+}
+
+func TestNewFromOS_NoColorUnset(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("NO_COLOR", "")
+
+	_, flags, err := cli.NewFromOS()
+	if err != nil {
+		t.Fatalf("NewFromOS: %v", err)
+	}
+	if flags.NoColor {
+		t.Errorf("Flags.NoColor: want false when NO_COLOR is unset/empty")
+	}
+}
+
 // Sanity: errors.As works with the unknown-subcommand error to keep callers
 // from depending on string matching forever.
 func TestRun_UnknownSubcommandErrorIsTyped(t *testing.T) {

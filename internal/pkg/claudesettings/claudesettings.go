@@ -14,6 +14,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/fileutil"
 )
 
 // Settings is the parsed top-level object of settings.json.
@@ -55,39 +57,13 @@ func Save(path string, s Settings) error {
 	if path == "" {
 		return errors.New("claudesettings: empty path")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("claudesettings: mkdir: %w", err)
-	}
-
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("claudesettings: marshal: %w", err)
 	}
 	data = append(data, '\n')
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".settings-*.tmp")
-	if err != nil {
-		return fmt.Errorf("claudesettings: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("claudesettings: chmod: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("claudesettings: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("claudesettings: close temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("claudesettings: rename: %w", err)
+	if err := fileutil.WriteAtomic(path, data); err != nil {
+		return fmt.Errorf("claudesettings: %w", err)
 	}
 	return nil
 }
