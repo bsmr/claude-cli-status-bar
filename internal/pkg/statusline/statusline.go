@@ -76,7 +76,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 
 	raw, err := io.ReadAll(io.LimitReader(stdin, maxStdinBytes))
 	if err != nil {
-		return fmt.Errorf("read stdin: %w", err)
+		return fmt.Errorf("statusline: read stdin: %w", err)
 	}
 
 	// Best-effort parse: a malformed payload is still captured and proxied.
@@ -150,9 +150,9 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 			Version: opts.Version,
 		}, raw)
 		if rerr != nil {
-			runErr = fmt.Errorf("render: %w", rerr)
+			runErr = fmt.Errorf("statusline: render: %w", rerr)
 		} else if _, werr := fmt.Fprintln(outW, rendered); werr != nil {
-			runErr = fmt.Errorf("write statusLine: %w", werr)
+			runErr = fmt.Errorf("statusline: write: %w", werr)
 		}
 	}
 

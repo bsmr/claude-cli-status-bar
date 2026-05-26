@@ -66,7 +66,7 @@ func ResolvePaths(e Env) Paths {
 func NewFromOS() (Paths, Flags, error) {
 	self, err := os.Executable()
 	if err != nil {
-		return Paths{}, Flags{}, fmt.Errorf("cli: resolve self: %w", err)
+		return Paths{}, Flags{}, fmt.Errorf("ccsb: resolve self: %w", err)
 	}
 	paths := ResolvePaths(Env{
 		Home:          os.Getenv("HOME"),
@@ -293,6 +293,31 @@ Subcommands:
 	fmt.Fprint(w, help)
 }
 
+// statusLineCommand is the {"type":"command","command":"<cmd> <args...>"}
+// shape of a statusLine entry in ~/.claude/settings.json that Claude Code
+// invokes as an external command. It is the only shape ccsb produces and
+// the only one install/uninstall/status need to introspect; richer shapes
+// (e.g. inline scripts) are out of scope.
+type statusLineCommand struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+// parseStatusLineCommand decodes raw into a statusLineCommand. The bool
+// reports whether raw was a well-formed type=command entry with a
+// non-empty Command — any other shape (parse error, wrong type, blank
+// command) returns ok=false so callers can treat them uniformly.
+func parseStatusLineCommand(raw json.RawMessage) (statusLineCommand, bool) {
+	var obj statusLineCommand
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return statusLineCommand{}, false
+	}
+	if obj.Type != "command" || obj.Command == "" {
+		return statusLineCommand{}, false
+	}
+	return obj, true
+}
+
 // pointsToSelf reports whether the current statusLine in s is a
 // {"type":"command","command":selfPath} entry.
 func pointsToSelf(s claudesettings.Settings, selfPath string) bool {
@@ -300,13 +325,8 @@ func pointsToSelf(s claudesettings.Settings, selfPath string) bool {
 	if !ok {
 		return false
 	}
-	var obj struct {
-		Command string `json:"command"`
-	}
-	if err := json.Unmarshal(sl, &obj); err != nil {
-		return false
-	}
-	return obj.Command == selfPath
+	obj, ok := parseStatusLineCommand(sl)
+	return ok && obj.Command == selfPath
 }
 
 // extractCommand parses a statusLine value of the form
@@ -315,14 +335,8 @@ func pointsToSelf(s claudesettings.Settings, selfPath string) bool {
 // ok=false if the input does not match. Quoted arguments are not handled —
 // users with quoted commands must edit ccsb's config directly.
 func extractCommand(raw json.RawMessage) (cmd string, args []string, ok bool) {
-	var obj struct {
-		Type    string `json:"type"`
-		Command string `json:"command"`
-	}
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return "", nil, false
-	}
-	if obj.Type != "command" || obj.Command == "" {
+	obj, ok := parseStatusLineCommand(raw)
+	if !ok {
 		return "", nil, false
 	}
 	fields := strings.Fields(obj.Command)
@@ -342,12 +356,6 @@ const canonicalCcstatusline = "npx -y ccstatusline@latest"
 // command string is exactly the canonical ccstatusline invocation. Extra
 // top-level fields (e.g. "padding") are ignored.
 func isCanonicalCcstatusline(raw json.RawMessage) bool {
-	var obj struct {
-		Type    string `json:"type"`
-		Command string `json:"command"`
-	}
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return false
-	}
-	return obj.Type == "command" && strings.TrimSpace(obj.Command) == canonicalCcstatusline
+	obj, ok := parseStatusLineCommand(raw)
+	return ok && strings.TrimSpace(obj.Command) == canonicalCcstatusline
 }
