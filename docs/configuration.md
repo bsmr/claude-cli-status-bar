@@ -292,6 +292,7 @@ segment functions, so they apply to every type:
 | `bg`    | string  | ANSI 256-color background as a decimal string `"0"`–`"255"`. Empty = no BG. |
 | `bold`  | bool    | When true, wraps the segment text in `ESC[1m … ESC[0m`.                     |
 | `align` | string  | `"right"` anchors this segment (and every later segment in the same row) to the right edge of the usable width. The slack between the preceding left group and the first right-aligned segment becomes padding; in Powerline mode that padding inherits the bg of the last left-aligned visible segment so the streak stays continuous. Degrades to inline (no padding) when terminal width is unknown or the row already overflows. Unknown values are treated as left (the default). Distinct from `Row.align="right"`, which forces the whole row right and bypasses Powerline. |
+| `wrap`  | bool    | When true, marks the segment as eligible for row-overflow reflow. If the containing row's visible content exceeds the usable width (`ttyCols - 2*margin` minus cap columns when active), every `wrap: true` segment is pulled out and joined into a new row inserted directly after the original. The new row inherits the parent row's `bg` / `palette` / `caps` / Powerline mode; palette rotation restarts at index 0. Reflow degrades to a no-op (segments stay inline) when `ttyCols` is unknown or the row already fits. In the default layout `limit_5h` and `limit_7d` carry this flag so a narrow terminal automatically lifts them onto their own line. |
 
 Per-segment additional fields are documented under each type below.
 
@@ -708,10 +709,10 @@ in from the built-in `defaultConfig` when `rows` is absent):
           {"type": "context", "fg": "245", "style": "bar+pct",
            "threshold_target": "pct",
            "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
-          {"type": "limit_5h", "fg": "245", "style": "bar+pct", "bar_width": 8,
+          {"type": "limit_5h", "fg": "245", "style": "bar+pct", "bar_width": 8, "wrap": true,
            "threshold_target": "pct",
            "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
-          {"type": "limit_7d", "fg": "245", "style": "bar+pct", "bar_width": 8,
+          {"type": "limit_7d", "fg": "245", "style": "bar+pct", "bar_width": 8, "wrap": true,
            "threshold_target": "pct",
            "thresholds": [{"min": 70, "fg": "136"}, {"min": 90, "fg": "160"}]},
           {"type": "schema_health", "fg": "160", "bg": "52", "bold": true, "align": "right"}

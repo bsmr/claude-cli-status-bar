@@ -2511,3 +2511,191 @@ func TestDiagnostic_Format_HealthyPayloadStillEmitsHeader(t *testing.T) {
 		t.Errorf("Format output should start with the header line, got %q", out)
 	}
 }
+
+// --- 0.2.22 responsive row overflow (reflow) -------------------------------
+
+func TestHasAnyWrap(t *testing.T) {
+	if hasAnyWrap(nil) {
+		t.Error("nil segments must report false")
+	}
+	if hasAnyWrap([]Segment{{Type: "text"}}) {
+		t.Error("no Wrap should report false")
+	}
+	if !hasAnyWrap([]Segment{{Type: "a"}, {Type: "b", Wrap: true}}) {
+		t.Error("any segment with Wrap=true should report true")
+	}
+}
+
+func TestRowOverflows_FalseWhenTtyColsUnknown(t *testing.T) {
+	row := Row{Segments: []Segment{{Type: "text", Label: "AAAAAAAAAAAAAAAA"}}}
+	if rowOverflows(&payload{}, row, renderEnv{ttyCols: 0}, false, " | ") {
+		t.Error("with ttyCols=0 the function must report false (cannot measure)")
+	}
+}
+
+func TestRowOverflows_TrueWhenContentExceedsUsable(t *testing.T) {
+	// 3 segments of width 4 + 2 separators of width 3 (" | ") = 18 cols.
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAA"},
+		{Type: "text", Label: "BBBB"},
+		{Type: "text", Label: "CCCC"},
+	}}
+	env := renderEnv{ttyCols: 10, margin: 0}
+	if !rowOverflows(&payload{}, row, env, false, " | ") {
+		t.Error("18 cols on a 10-col tty must report overflow")
+	}
+}
+
+func TestRowOverflows_FalseWhenItFits(t *testing.T) {
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "A"},
+		{Type: "text", Label: "B"},
+	}}
+	env := renderEnv{ttyCols: 80, margin: 0}
+	if rowOverflows(&payload{}, row, env, false, " | ") {
+		t.Error("two short segments on an 80-col tty must NOT overflow")
+	}
+}
+
+func TestSplitWrap_PartitionsAndClearsWrapFlag(t *testing.T) {
+	row := Row{
+		Bg:      "234",
+		Palette: []string{"234", "235"},
+		Caps:    true,
+		Segments: []Segment{
+			{Type: "model"},
+			{Type: "wrap_a", Wrap: true},
+			{Type: "context"},
+			{Type: "wrap_b", Wrap: true},
+		},
+	}
+	left, wrapped := splitWrap(row)
+	if len(left.Segments) != 2 || left.Segments[0].Type != "model" || left.Segments[1].Type != "context" {
+		t.Errorf("left segments wrong: %+v", left.Segments)
+	}
+	if len(wrapped.Segments) != 2 || wrapped.Segments[0].Type != "wrap_a" || wrapped.Segments[1].Type != "wrap_b" {
+		t.Errorf("wrapped segments wrong: %+v", wrapped.Segments)
+	}
+	for _, s := range wrapped.Segments {
+		if s.Wrap {
+			t.Errorf("moved segment must have Wrap cleared: %+v", s)
+		}
+	}
+	if wrapped.Bg != "234" || wrapped.Caps != true || len(wrapped.Palette) != 2 {
+		t.Errorf("wrapped row must inherit row styling: %+v", wrapped)
+	}
+}
+
+func TestExpandWrappedRows_NoSplitWhenNoWrapSegments(t *testing.T) {
+	rows := []Row{{Segments: []Segment{{Type: "text", Label: "x"}}}}
+	out := expandWrappedRows(&payload{}, rows, renderEnv{ttyCols: 10}, false, " | ")
+	if len(out) != 1 {
+		t.Errorf("rows without Wrap must pass through unchanged: got %d", len(out))
+	}
+}
+
+func TestExpandWrappedRows_NoSplitWhenItFits(t *testing.T) {
+	rows := []Row{{Segments: []Segment{
+		{Type: "text", Label: "A"},
+		{Type: "text", Label: "B", Wrap: true},
+	}}}
+	out := expandWrappedRows(&payload{}, rows, renderEnv{ttyCols: 80, margin: 0}, false, " | ")
+	if len(out) != 1 {
+		t.Errorf("row that fits must not be split even with Wrap: got %d", len(out))
+	}
+}
+
+func TestExpandWrappedRows_SplitsOnOverflow(t *testing.T) {
+	rows := []Row{{
+		Palette: []string{"234"},
+		Caps:    true,
+		Segments: []Segment{
+			{Type: "text", Label: "LLLLLLLLLL"},
+			{Type: "text", Label: "MMMMMMMMMM"},
+			{Type: "text", Label: "RRRRRRRRRR", Wrap: true},
+		},
+	}}
+	env := renderEnv{ttyCols: 20, margin: 0}
+	out := expandWrappedRows(&payload{}, rows, env, false, " | ")
+	if len(out) != 2 {
+		t.Fatalf("expected 2 rows after split, got %d", len(out))
+	}
+	if len(out[0].Segments) != 2 {
+		t.Errorf("left row should keep 2 segments, got %+v", out[0].Segments)
+	}
+	if len(out[1].Segments) != 1 || out[1].Segments[0].Label != "RRRRRRRRRR" {
+		t.Errorf("wrapped row should hold the wrap segment, got %+v", out[1].Segments)
+	}
+	if out[1].Caps != true || len(out[1].Palette) != 1 {
+		t.Errorf("new row must inherit styling: caps=%v palette=%v", out[1].Caps, out[1].Palette)
+	}
+}
+
+func TestExpandWrappedRows_RightAlignedRowsDoNotWrap(t *testing.T) {
+	rows := []Row{{
+		Align: "right",
+		Segments: []Segment{
+			{Type: "text", Label: "AAAA"},
+			{Type: "text", Label: "BBBB", Wrap: true},
+		},
+	}}
+	env := renderEnv{ttyCols: 4, margin: 0} // way too narrow
+	out := expandWrappedRows(&payload{}, rows, env, false, " | ")
+	if len(out) != 1 {
+		t.Errorf("right-aligned rows must pass through unchanged, got %d", len(out))
+	}
+}
+
+// --- end-to-end Render() with reflow ---------------------------------------
+
+func TestRender_WrapMovesSegmentsToNewRowOnOverflow(t *testing.T) {
+	// Configure a single row with three segments + two wrap-marked
+	// extras; force a narrow tty via Config.Width so the row overflows.
+	cfg := Config{
+		Width:  30,
+		Margin: intPtr(0),
+		Rows: []Row{{
+			Palette: []string{"234"},
+			Segments: []Segment{
+				{Type: "text", Label: "MODEL"},
+				{Type: "text", Label: "CONTEXT-DATA"},
+				{Type: "text", Label: "EXTRA-FIVE-H", Wrap: true},
+				{Type: "text", Label: "EXTRA-SEVEN-D", Wrap: true},
+			},
+		}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 rows after wrap, got %d:\n%s", len(lines), got)
+	}
+	if !strings.Contains(lines[0], "MODEL") || !strings.Contains(lines[0], "CONTEXT-DATA") {
+		t.Errorf("row 1 should keep the left segments: %q", lines[0])
+	}
+	if strings.Contains(lines[0], "EXTRA-FIVE-H") || strings.Contains(lines[0], "EXTRA-SEVEN-D") {
+		t.Errorf("row 1 should NOT carry wrap segments: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "EXTRA-FIVE-H") || !strings.Contains(lines[1], "EXTRA-SEVEN-D") {
+		t.Errorf("row 2 should carry the wrap segments: %q", lines[1])
+	}
+}
+
+func TestRender_WrapStaysInPlaceWhenRowFits(t *testing.T) {
+	cfg := Config{
+		Width:  200,
+		Margin: intPtr(0),
+		Rows: []Row{{
+			Segments: []Segment{
+				{Type: "text", Label: "A"},
+				{Type: "text", Label: "B", Wrap: true},
+			},
+		}},
+	}
+	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
+	if strings.Contains(got, "\n") {
+		t.Errorf("row that fits must stay one line, got %q", got)
+	}
+}
