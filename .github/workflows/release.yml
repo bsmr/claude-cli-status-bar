@@ -1,0 +1,37 @@
+name: release
+
+# Triggered by v*.*.* tags pushed to github-origin. The user pushes
+# tags deliberately as part of the release-workflow Gate 3, so a
+# successful tag-to-Release pipeline ride here is the expected
+# completion of every patch ship.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # GoReleaser needs the full git history to derive the
+          # changelog since the previous tag.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

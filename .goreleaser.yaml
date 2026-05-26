@@ -1,0 +1,87 @@
+# GoReleaser config for ccsb cross-platform releases.
+#
+# Triggered by .github/workflows/release.yml on every v*.*.* tag push.
+# Produces tarballs/zips per OS+ARCH, a checksums file, and a GitHub
+# Release with auto-generated notes drawn from the commits since the
+# previous tag.
+#
+# Local validation (when goreleaser is installed):
+#   goreleaser check
+#   goreleaser release --snapshot --clean --skip=publish
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ccsb
+    main: ./cmd/ccsb
+    binary: ccsb
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows on ARM64 is unusual for terminal tooling; skip until
+      # there is concrete demand.
+      - goos: windows
+        goarch: arm64
+    # No explicit -X ldflag for the version: runtime/debug.ReadBuildInfo()
+    # picks up the tag automatically when go build runs on a tagged
+    # commit, and that is what GoReleaser does here.
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+
+archives:
+  - id: ccsb
+    name_template: >-
+      ccsb_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - docs/configuration.md
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+release:
+  github:
+    owner: bsmr
+    name: claude-cli-status-bar
+  prerelease: auto
+  draft: false
+  header: |
+    ## Install
+
+    Download the archive for your OS/arch from the assets below, extract
+    `ccsb`, place it on `$PATH`, then run `ccsb install` to hook it into
+    Claude Code's `~/.claude/settings.json`.
+
+    See the [README](README.md) for the full subcommand surface and
+    [docs/configuration.md](docs/configuration.md) for the renderer
+    schema.
+  footer: |
+    ---
+    Built from `go.muehmer.eu/claude-cli-status-bar` — the module path
+    resolves through a vanity URL pointing at this repository.
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - '^Merge'
+      - '^chore:'
+      - 'Co-Authored-By:'

@@ -8,7 +8,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** active development — `0.2.24`. The native renderer is the
+> **Status:** active development — `0.2.25`. The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
@@ -67,7 +67,16 @@ for compatibility with existing setups (see [Background](#background)).
   place — ccsb sits in front of it for capture and schema-drift logging
   while the existing renderer keeps driving the visible bar.
 
-## Build
+## Install
+
+For tagged releases the easiest path is a pre-built binary from the
+[GitHub Releases page](https://github.com/bsmr/claude-cli-status-bar/releases):
+Linux (amd64, arm64), macOS (amd64, arm64), and Windows (amd64) are
+built automatically by the release pipeline. Download the archive
+for your OS+arch, extract `ccsb` to anywhere on `$PATH`, then run
+`ccsb install` to hook it into Claude Code.
+
+### Build from source
 
 The Go module path is `go.muehmer.eu/claude-cli-status-bar`. A vanity
 URL pointing at the public mirror on GitHub is planned; until it is
@@ -146,10 +155,13 @@ section and the full segment vocabulary are documented in
   schema-robustness ladder (per-segment isolated parsing, `.diag`
   drift logger, `ccsb doctor` schema-check, persistent
   `schema_version` tracking).
-- **Next** — all three terminal-aware layout primitives shipped
-  (reflow + `max_width` + `min_cols`). The remaining roadmap item is
-  the GoReleaser-based release pipeline for cross-platform binaries
-  on GitHub Releases.
+- **0.2.25 release pipeline** — GoReleaser plus GitHub Actions:
+  every `v*.*.*` tag push to the GitHub mirror builds the
+  cross-platform binaries and publishes a Release; every push or PR
+  runs `go vet`, `go test -race -cover`, and `gofmt`.
+- **0.3.x** — major new directions, opened once 0.2.x is closed
+  with the planned hygiene patches (proxy-flake fix in 0.2.26,
+  lint-cleanup in 0.2.27).
 - **Later** — a GoReleaser-based release pipeline producing
   cross-platform binaries on GitHub Releases.
 

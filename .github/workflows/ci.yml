@@ -1,0 +1,41 @@
+name: ci
+
+# Runs on every push to main/development-* and on every PR targeting
+# main. Three gates: gofmt cleanliness, go vet, and the test suite
+# with race + cover. Matches the local "Develop" block in the README.
+on:
+  push:
+    branches:
+      - main
+      - 'development-**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt found files needing formatting:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race -cover ./...
