@@ -104,7 +104,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		if diag.Issue() || versionChanged {
 			content := diag.Format()
 			if versionChanged {
-				content = append(content, []byte(fmt.Sprintf("schema_version changed: %s -> %s\n", prevVer, curVer))...)
+				content = fmt.Appendf(content, "schema_version changed: %s -> %s\n", prevVer, curVer)
 			}
 			if _, cerr := capture.SaveOutput(opts.CaptureDir, p.SessionID, content, now, "diag"); cerr != nil {
 				fmt.Fprintf(stderr, "ccsb: capture diag: %s\n", cerr)

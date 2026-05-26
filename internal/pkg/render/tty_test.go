@@ -89,8 +89,8 @@ func TestParseProcStat(t *testing.T) {
 // procStatStub builds a /proc/<pid>/stat-shaped byte slice with the
 // given (ppid, tty_nr). Used by the walker tests.
 func procStatStub(comm string, ppid, ttyNr int) []byte {
-	return []byte(fmt.Sprintf("1 (%s) S %d 1 1 %d 1 0 0 0 0 0 0 0 0 0 20 0 1 0 100 0 0",
-		comm, ppid, ttyNr))
+	return fmt.Appendf(nil, "1 (%s) S %d 1 1 %d 1 0 0 0 0 0 0 0 0 0 20 0 1 0 100 0 0",
+		comm, ppid, ttyNr)
 }
 
 func TestWalkProcForTTY_ImmediateHit(t *testing.T) {

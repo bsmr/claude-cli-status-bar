@@ -54,8 +54,8 @@ func renderText(_ *payload, s Segment, _ renderEnv) string {
 // avoid double-flagging like "Opus 4.7 (1M context) 1M".
 func renderModel(p *payload, s Segment, _ renderEnv) string {
 	name := p.Model.DisplayName
-	if i := strings.Index(name, " ("); i > 0 {
-		name = name[:i]
+	if before, _, found := strings.Cut(name, " ("); found && before != "" {
+		name = before
 	}
 	if s.Show1MFlag && p.Exceeds200kT {
 		name += " 1M"
