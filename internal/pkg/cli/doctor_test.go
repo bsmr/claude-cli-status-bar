@@ -81,7 +81,8 @@ func TestSchemaCheck_ValidPayloadHasNoDrift(t *testing.T) {
 		"rate_limits": {},
 		"fast_mode": false,
 		"thinking": {"enabled": false},
-		"exceeds_200k_tokens": false
+		"exceeds_200k_tokens": false,
+		"schema_version": "1.0"
 	}`
 	if err := os.WriteFile(filepath.Join(dir, "2026-05-26T12:00:00Z-x.json"), []byte(raw), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
@@ -135,6 +136,7 @@ func TestSchemaCheck_ExtraKeys(t *testing.T) {
 		"fast_mode": false,
 		"thinking": {"enabled": false},
 		"exceeds_200k_tokens": false,
+		"schema_version": "1.0",
 		"shiny_new_field": {"a": 1},
 		"another_one": "yes"
 	}`
