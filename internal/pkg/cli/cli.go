@@ -64,7 +64,7 @@ type UnknownSubcommandError struct {
 }
 
 func (e *UnknownSubcommandError) Error() string {
-	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, doctor, version, help)", e.Name)
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, config, doctor, version, help)", e.Name)
 }
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
@@ -88,6 +88,8 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runStatus(p, stdout)
 	case "mode":
 		return runMode(p, args[1:], stdout)
+	case "config":
+		return runConfig(p, args[1:], stdout)
 	case "doctor":
 		return runDoctor(p, stdout)
 	default:
@@ -256,6 +258,9 @@ Subcommands:
               argument. With "native", clear the proxy block; with "proxy",
               set it to "npx -y ccstatusline@latest" by default or to the
               given command and arguments.
+  config      "config reset" moves the existing config.json aside (as a
+              timestamped .bak file) so the next run picks up the in-code
+              defaults. The only verb today; a no-op when no config exists.
   doctor      Diagnose and auto-fix configuration problems: re-installs if
               settings.json is not hooked; switches to native mode if the
               proxy command is circular, another ccsb binary, or missing.

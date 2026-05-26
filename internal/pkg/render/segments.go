@@ -39,6 +39,7 @@ func init() {
 	segmentFuncs["git_branch"] = renderGitBranch
 	segmentFuncs["tty_size"] = renderTTYSize
 	segmentFuncs["version"] = renderVersion
+	segmentFuncs["schema_health"] = renderSchemaHealth
 }
 
 // renderText returns the segment's Label verbatim. Useful as a literal
@@ -392,4 +393,19 @@ func renderVersion(_ *payload, _ Segment, env renderEnv) string {
 		return "☠ v" + env.version // ☠ v dev
 	}
 	return "v" + env.version
+}
+
+// renderSchemaHealth emits a single skull glyph (☠ U+2620) when
+// env.schemaIssue is true, signalling that the inbound JSON payload from
+// Claude Code looks broken (parse failed, or a critical field is empty).
+// Returns "" otherwise so the segment is hidden and skips its palette
+// slot. The visible glyph is plain text — the alarm colour comes from
+// the segment's FG/BG/Bold via the outer style() wrap, so the default
+// config can paint it red-on-darkred while a user override can recolour
+// or restyle it freely.
+func renderSchemaHealth(_ *payload, _ Segment, env renderEnv) string {
+	if !env.schemaIssue {
+		return ""
+	}
+	return "☠"
 }
