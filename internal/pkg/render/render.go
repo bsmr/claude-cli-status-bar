@@ -295,6 +295,43 @@ func (e parseErrors) hasIssue() bool {
 	return e.topLevel != nil || len(e.fieldErrors) > 0
 }
 
+// expectedPayloadKeys lists every top-level JSON key parsePayload
+// knows how to extract. It is the canonical contract between ccsb and
+// Claude Code's statusLine payload: every key listed here is parsed
+// individually by parsePayload, every key NOT listed is silently
+// ignored as an additive schema extension. The list must stay in
+// sync with the field() calls inside parsePayload — drift is caught
+// by TestExpectedPayloadKeys_MatchesParsePayload, which feeds a
+// payload containing every key from this list and asserts the parser
+// reports no surprises.
+//
+// External consumers (ccsb doctor) use ExpectedPayloadKeys() to
+// compare a real capture against this contract.
+var expectedPayloadKeys = []string{
+	"session_id",
+	"session_name",
+	"model",
+	"workspace",
+	"output_style",
+	"effort",
+	"cost",
+	"context_window",
+	"rate_limits",
+	"fast_mode",
+	"thinking",
+	"exceeds_200k_tokens",
+}
+
+// ExpectedPayloadKeys returns a fresh copy of the top-level JSON keys
+// that parsePayload extracts. Callers can compare this list against a
+// real capture's actual top-level keys to spot missing or additive
+// schema drift.
+func ExpectedPayloadKeys() []string {
+	out := make([]string, len(expectedPayloadKeys))
+	copy(out, expectedPayloadKeys)
+	return out
+}
+
 // parsePayload unmarshals raw using per-segment isolation: the bytes
 // are first decoded into a map[string]json.RawMessage, then each
 // known top-level key is unmarshalled into its specific destination
@@ -305,6 +342,10 @@ func (e parseErrors) hasIssue() bool {
 // Missing top-level keys are left at the destination's zero value
 // and do NOT show up in fieldErrors; segment renderers hide
 // themselves on zero-value data via their own checks.
+//
+// The list of keys this function recognises is duplicated in
+// expectedPayloadKeys for ccsb doctor's schema-check; the two
+// lists must stay in sync (enforced by test).
 func parsePayload(raw []byte) (payload, parseErrors) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
