@@ -2084,9 +2084,24 @@ func TestSegmentAlignRight_Powerline_OverflowFallsBackInline(t *testing.T) {
 
 // --- schema health detection ------------------------------------------------
 
-func TestDetectSchemaIssue_TrueOnParseError(t *testing.T) {
-	if !detectSchemaIssue(&payload{}, errors.New("any parse error")) {
-		t.Error("parse error must always be flagged as a schema issue")
+func TestDetectSchemaIssue_TrueOnTopLevelError(t *testing.T) {
+	errs := parseErrors{topLevel: errors.New("any parse error")}
+	if !detectSchemaIssue(&payload{}, errs) {
+		t.Error("top-level parse error must always be flagged as a schema issue")
+	}
+}
+
+func TestDetectSchemaIssue_TrueOnFieldError(t *testing.T) {
+	// Critical fields are all set — only a per-field type error
+	// should trip the indicator.
+	p := payload{
+		SessionID: "s",
+		Model:     modelF{DisplayName: "Opus"},
+		Workspace: workspace{CurrentDir: "/x"},
+	}
+	errs := parseErrors{fieldErrors: map[string]error{"cost": errors.New("type error")}}
+	if !detectSchemaIssue(&p, errs) {
+		t.Error("a per-field type error must trip the indicator even when critical fields are filled")
 	}
 }
 
@@ -2102,7 +2117,7 @@ func TestDetectSchemaIssue_TrueOnMissingCriticalFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if !detectSchemaIssue(&tc.p, nil) {
+			if !detectSchemaIssue(&tc.p, parseErrors{}) {
 				t.Errorf("expected schema issue for %s", tc.name)
 			}
 		})
@@ -2115,7 +2130,7 @@ func TestDetectSchemaIssue_FalseOnFullPayload(t *testing.T) {
 		Model:     modelF{DisplayName: "Opus"},
 		Workspace: workspace{CurrentDir: "/x"},
 	}
-	if detectSchemaIssue(&p, nil) {
+	if detectSchemaIssue(&p, parseErrors{}) {
 		t.Error("valid payload must not be flagged")
 	}
 }
@@ -2171,5 +2186,168 @@ func TestRender_SchemaHealthOnlyInDefaultLayoutByDefault(t *testing.T) {
 	}
 	if strings.Contains(got, "☠") {
 		t.Errorf("user config without schema_health segment must not show ☠:\n%s", got)
+	}
+}
+
+// --- parsePayload (per-segment isolation) -----------------------------------
+
+func TestParsePayload_TopLevelErrorOnNonObject(t *testing.T) {
+	p, errs := parsePayload([]byte("not json"))
+	if errs.topLevel == nil {
+		t.Error("expected topLevel error on garbage input")
+	}
+	if len(errs.fieldErrors) != 0 {
+		t.Errorf("fieldErrors must be empty when topLevel fails, got %v", errs.fieldErrors)
+	}
+	if p.SessionID != "" || p.Model.DisplayName != "" {
+		t.Error("payload should be zero-valued on top-level failure")
+	}
+}
+
+func TestParsePayload_TopLevelErrorOnArray(t *testing.T) {
+	_, errs := parsePayload([]byte(`[1,2,3]`))
+	if errs.topLevel == nil {
+		t.Error("expected topLevel error on JSON array (we want a top-level object)")
+	}
+}
+
+func TestParsePayload_AllValidNoErrors(t *testing.T) {
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus"},
+		"workspace": {"current_dir": "/x"},
+		"cost": {"total_cost_usd": 1.23},
+		"context_window": {"used_percentage": 50}
+	}`)
+	p, errs := parsePayload(raw)
+	if errs.hasIssue() {
+		t.Errorf("expected no issues, got %+v", errs)
+	}
+	if p.SessionID != "s" || p.Model.DisplayName != "Opus" || p.Workspace.CurrentDir != "/x" {
+		t.Errorf("critical fields not populated: %+v", p)
+	}
+	if p.Cost.TotalCostUSD != 1.23 {
+		t.Errorf("cost not populated: %+v", p.Cost)
+	}
+	if p.Context.UsedPercentage != 50 {
+		t.Errorf("context_window not populated: %+v", p.Context)
+	}
+}
+
+func TestParsePayload_FieldErrorIsolatedFromOtherFields(t *testing.T) {
+	// cost.total_cost_usd is a string but the rest is fine. The
+	// per-segment unmarshal must capture the cost error and leave all
+	// other fields populated normally.
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus"},
+		"workspace": {"current_dir": "/x"},
+		"cost": {"total_cost_usd": "not a number"},
+		"context_window": {"used_percentage": 50, "context_window_size": 1000}
+	}`)
+	p, errs := parsePayload(raw)
+	if errs.topLevel != nil {
+		t.Errorf("topLevel should be nil — only the cost field is broken: %v", errs.topLevel)
+	}
+	if _, ok := errs.fieldErrors["cost"]; !ok {
+		t.Errorf("expected fieldErrors[cost]; got %v", errs.fieldErrors)
+	}
+	if p.Model.DisplayName != "Opus" {
+		t.Errorf("model must survive a cost error: %+v", p.Model)
+	}
+	if p.Context.UsedPercentage != 50 {
+		t.Errorf("context_window must survive a cost error: %+v", p.Context)
+	}
+	// Cost itself is zero-valued because its unmarshal failed.
+	if p.Cost.TotalCostUSD != 0 {
+		t.Errorf("cost should be zero after its unmarshal failed: %+v", p.Cost)
+	}
+}
+
+func TestParsePayload_MissingFieldIsNotAnError(t *testing.T) {
+	// A payload that omits "cost" entirely. The field lands at the
+	// zero value, but no fieldErrors entry is generated — missing is
+	// distinct from broken.
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus"},
+		"workspace": {"current_dir": "/x"}
+	}`)
+	p, errs := parsePayload(raw)
+	if errs.hasIssue() {
+		t.Errorf("missing fields must not be reported as issues: %+v", errs)
+	}
+	if p.Cost.TotalCostUSD != 0 {
+		t.Errorf("missing cost field should land at zero: %+v", p.Cost)
+	}
+}
+
+func TestParsePayload_UnknownKeysAreIgnored(t *testing.T) {
+	// Additive schema changes (a new key on Claude Code's side) must
+	// not trip the parser — the unknown key is silently dropped.
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus"},
+		"workspace": {"current_dir": "/x"},
+		"shiny_new_field": {"a": 1, "b": [2, 3]}
+	}`)
+	_, errs := parsePayload(raw)
+	if errs.hasIssue() {
+		t.Errorf("unknown keys must be ignored, got %+v", errs)
+	}
+}
+
+// --- Render() integration: field error contained ---------------------------
+
+func TestRender_FieldErrorIsolationKeepsOtherSegmentsVisible(t *testing.T) {
+	// Cost is broken (string instead of number) but everything else
+	// is well-formed. Under per-segment isolation:
+	//   - cost segment hides (zero data + cost would render "$0.00",
+	//     but the broken-cost path leaves it zero so the standard
+	//     "$0.00" still appears — that is the documented behaviour,
+	//     so we don't assert on cost itself).
+	//   - context segment renders with the bar.
+	//   - schema_health fires because the per-field error trips the
+	//     indicator.
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus 4.7"},
+		"workspace": {"current_dir": "/tmp"},
+		"cost": {"total_cost_usd": "BROKEN"},
+		"context_window": {"used_percentage": 50, "context_window_size": 1000000, "total_input_tokens": 500000}
+	}`)
+	got, err := Render(Options{NoColor: true}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(got, "☠") {
+		t.Errorf("schema_health must fire on a per-field error:\n%s", got)
+	}
+	// Context segment must still render its bar — proving the field
+	// error did not collapse the whole payload.
+	if !strings.Contains(got, "500k/1M") {
+		t.Errorf("context segment must render even when cost is broken:\n%s", got)
+	}
+	if !strings.Contains(got, "Opus 4.7") {
+		t.Errorf("model must still render:\n%s", got)
+	}
+}
+
+func TestRender_NoFieldErrorNoIndicator(t *testing.T) {
+	// Companion to the above: identical payload but with a valid cost
+	// shape. No indicator should appear.
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus 4.7"},
+		"workspace": {"current_dir": "/tmp"},
+		"cost": {"total_cost_usd": 1.23},
+		"context_window": {"used_percentage": 50, "context_window_size": 1000000, "total_input_tokens": 500000}
+	}`)
+	got, err := Render(Options{NoColor: true}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(got, "☠") {
+		t.Errorf("schema_health must stay hidden on a fully valid payload:\n%s", got)
 	}
 }
