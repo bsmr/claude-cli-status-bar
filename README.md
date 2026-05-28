@@ -1,5 +1,9 @@
 # claude-cli-status-bar
 
+> **Note:** The Go vanity URL `go.muehmer.eu/claude-cli-status-bar` is
+> not yet active. Install from the pre-built binaries (see [Install](#install))
+> or [build from source](#build-from-source) until it is wired up.
+
 ![ccsb rendering a multi-row Powerline statusline with model, context bar, 5h and 7d rate-limit bars, git branch, lines diff, cwd, and version](docs/img/screenshot.png)
 
 A native [statusLine](https://docs.claude.com/en/docs/claude-code/statusline)
@@ -10,7 +14,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** active development — `0.2.29`. The native renderer is the
+> **Status:** active development — `0.2.31`. The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
@@ -80,9 +84,11 @@ for your OS+arch, extract `ccsb` to anywhere on `$PATH`, then run
 
 ### Build from source
 
-The Go module path is `go.muehmer.eu/claude-cli-status-bar`. A vanity
-URL pointing at the public mirror on GitHub is planned; until it is
-in place, build from source:
+The Go module path is `go.muehmer.eu/claude-cli-status-bar`.
+Recommended for Linux and macOS — Windows users should prefer the
+pre-built binary from the
+[GitHub Releases page](https://github.com/bsmr/claude-cli-status-bar/releases)
+rather than building from source.
 
 ```bash
 git clone https://github.com/bsmr/claude-cli-status-bar.git
