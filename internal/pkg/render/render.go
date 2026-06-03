@@ -50,10 +50,36 @@ type Config struct {
 	// space on each side. "slant" renders U+E0BC / U+E0BA filled
 	// triangles. Unknown values fall back to "round".
 	CapStyle string `json:"cap_style,omitempty"`
+	// Palette is a single shared list of ANSI 256-color strings used
+	// as the global background gradient across all output rows. Output
+	// row N starts at index N*PaletteStride and rotates from there per
+	// visible segment. Row.Palette (when set) overrides this on a
+	// per-row basis. When empty, defaultGlobalPalette is used.
+	Palette []string `json:"palette,omitempty"`
+	// PaletteStride is the per-row offset into the global Palette,
+	// applied as paletteStart = outputRowIndex * PaletteStride. When
+	// 0, defaultPaletteStride (= 2) is used so every output row starts
+	// two shades brighter than the previous one. Negative values clamp
+	// to 0 (no row-to-row progression).
+	PaletteStride int `json:"palette_stride,omitempty"`
 }
 
 // defaultMargin is the implicit Config.Margin when the field is unset.
 const defaultMargin = 2
+
+// defaultPaletteStride is the implicit Config.PaletteStride when the
+// field is unset (or non-positive). Two shades per row produces a
+// clearly visible brighten step per output row without exhausting a
+// 9-entry palette across the typical 2–3 visible rows.
+const defaultPaletteStride = 2
+
+// defaultGlobalPalette is the implicit Config.Palette when the field
+// is unset. Nine monotonic dark→light greys covering ANSI 232..240 so
+// the per-row stride math never has to wrap around within a real
+// bar (4 output rows × stride 2 = offset 6 + a few cells fits cleanly).
+var defaultGlobalPalette = []string{
+	"232", "233", "234", "235", "236", "237", "238", "239", "240",
+}
 
 // effectiveMargin returns the column count to reserve as plain leading
 // space and to subtract twice from the usable bg-fill width. A nil
@@ -66,6 +92,20 @@ func (c Config) effectiveMargin() int {
 		return 0
 	}
 	return *c.Margin
+}
+
+// effectivePaletteStride returns the per-output-row offset into the
+// global palette. Zero or unset uses defaultPaletteStride; negative
+// values clamp to 0 so a malformed config cannot mathematically run
+// off the start of the slice.
+func (c Config) effectivePaletteStride() int {
+	if c.PaletteStride == 0 {
+		return defaultPaletteStride
+	}
+	if c.PaletteStride < 0 {
+		return 0
+	}
+	return c.PaletteStride
 }
 
 // Row is one output line. Powerline mode reads Bg to colour-fill the
@@ -542,19 +582,23 @@ func (d Diagnostic) Format() []byte {
 var nowFunc = time.Now
 
 // defaultConfig is applied when Config.Rows is empty: the full
-// out-of-the-box look (two-row Powerline with round end caps, solid
-// chevrons, monotonic-grey palette per row, threshold-coloured
-// percentage digits, right-aligned version stamp). Top-level
-// scalars (Margin, Width, Separator) are left to the caller's
-// Config so test fixtures that pin those values continue to work.
+// out-of-the-box look (Powerline with round end caps, solid chevrons,
+// single 9-grey monotonic-dark→light global palette with a stride of
+// 2 per output row, threshold-coloured percentage digits, right-aligned
+// version stamp). Top-level scalars (Margin, Width, Separator) are left
+// to the caller's Config so test fixtures that pin those values
+// continue to work. The shared Palette plus per-row paletteStart
+// guarantees every output row (including reflow-inserted rows) starts
+// exactly two shades brighter than the one before it.
 var defaultConfig = Config{
 	Powerline:      true,
 	PowerlineStyle: "solid",
 	CapStyle:       "round",
+	Palette:        defaultGlobalPalette,
+	PaletteStride:  defaultPaletteStride,
 	Rows: []Row{
 		{
-			Palette: []string{"234", "235", "236", "237", "238"},
-			Caps:    true,
+			Caps: true,
 			Segments: []Segment{
 				{Type: "model", FG: "33", Bold: true, Show1MFlag: true},
 				{Type: "mode"},
@@ -580,8 +624,7 @@ var defaultConfig = Config{
 			},
 		},
 		{
-			Palette: []string{"239", "240", "241", "242"},
-			Caps:    true,
+			Caps: true,
 			Segments: []Segment{
 				{Type: "git_branch", FG: "33"},
 				{Type: "lines", FG: "245"},
@@ -648,11 +691,12 @@ func pickCapGlyphs(style string) capGlyphs {
 	}
 }
 
-// defaultPalette rotates per visible segment when neither Row.Bg
-// nor Row.Palette is configured and Powerline is enabled. Three
-// subtle dark greys produce a classic alternating-Powerline look
-// out of the box.
-var defaultPalette = []string{"234", "236", "238"}
+// Legacy defaultPalette removed in 0.2.32: when Row.Palette / Row.Bg
+// are unset the resolution now falls through to env.globalPalette
+// (Config.Palette, with defaultGlobalPalette as the package-level
+// fallback). The per-output-row paletteStart is computed in Render
+// after expandWrappedRows so the gradient stays monotonic across
+// reflowed layouts.
 
 // pickGlyph maps Config.PowerlineStyle to its chevron glyph.
 // Unknown or empty values yield the thin glyph.
@@ -667,14 +711,18 @@ func pickGlyph(style string) string {
 // at a given visible-segment position. Priority ladder:
 //
 //  1. Segment.BG (explicit per-segment override)
-//  2. Row.Palette[visibleIndex % len] (per-row rotation)
+//  2. Row.Palette[visibleIndex % len] (per-row rotation, starts at 0)
 //  3. Row.Bg (uniform row fill)
-//  4. defaultPalette[visibleIndex % len] when powerlineActive is true
+//  4. globalPalette[(paletteStart + visibleIndex) % len] when
+//     powerlineActive is true and globalPalette is non-empty
 //  5. "" (no bg, natural-mode fallback)
 //
 // visibleIndex is the rank of the segment among the row's non-empty
 // segments — empty segments do not claim a palette slot.
-func effectiveSegmentBg(row Row, seg Segment, visibleIndex int, powerlineActive bool) string {
+// paletteStart shifts the global-palette rotation per output row so
+// each row starts a configurable number of shades brighter than the
+// previous one; it has no effect when Row.Palette is set.
+func effectiveSegmentBg(row Row, seg Segment, visibleIndex int, globalPalette []string, paletteStart int, powerlineActive bool) string {
 	if seg.BG != "" {
 		return seg.BG
 	}
@@ -684,8 +732,8 @@ func effectiveSegmentBg(row Row, seg Segment, visibleIndex int, powerlineActive 
 	if row.Bg != "" {
 		return row.Bg
 	}
-	if powerlineActive {
-		return defaultPalette[visibleIndex%len(defaultPalette)]
+	if powerlineActive && len(globalPalette) > 0 {
+		return globalPalette[(paletteStart+visibleIndex)%len(globalPalette)]
 	}
 	return ""
 }
@@ -829,6 +877,12 @@ func Render(opts Options, raw []byte) (string, error) {
 		cfg.Powerline = defaultConfig.Powerline
 		cfg.PowerlineStyle = defaultConfig.PowerlineStyle
 		cfg.CapStyle = defaultConfig.CapStyle
+		if len(cfg.Palette) == 0 {
+			cfg.Palette = defaultConfig.Palette
+		}
+		if cfg.PaletteStride == 0 {
+			cfg.PaletteStride = defaultConfig.PaletteStride
+		}
 	}
 	rows := cfg.Rows
 	sep := cfg.Separator
@@ -841,6 +895,10 @@ func Render(opts Options, raw []byte) (string, error) {
 		cwd = p.Workspace.CurrentDir
 	}
 
+	globalPalette := cfg.Palette
+	if len(globalPalette) == 0 {
+		globalPalette = defaultGlobalPalette
+	}
 	env := renderEnv{
 		cwd:            cwd,
 		colorEnabled:   !opts.NoColor,
@@ -848,6 +906,7 @@ func Render(opts Options, raw []byte) (string, error) {
 		powerlineStyle: cfg.PowerlineStyle,
 		capStyle:       cfg.CapStyle,
 		schemaIssue:    schemaIssue,
+		globalPalette:  globalPalette,
 	}
 	env.ttyCols, env.ttyRows = discoverTermSize(cfg)
 	env.margin = cfg.effectiveMargin()
@@ -868,16 +927,23 @@ func Render(opts Options, raw []byte) (string, error) {
 	powerlineActive := cfg.Powerline && env.colorEnabled
 	rows = expandWrappedRows(&p, rows, env, powerlineActive, sep)
 
+	// paletteStart for each output row is computed AFTER reflow so a
+	// wrap-inserted row claims its own offset (= its output index
+	// times the stride) and continues the monotonic dark→light
+	// gradient instead of restarting at the parent row's offset.
+	stride := cfg.effectivePaletteStride()
 	var lines []string
-	for _, row := range rows {
+	for outputIdx, row := range rows {
+		rowEnv := env
+		rowEnv.paletteStart = outputIdx * stride
 		var line string
 		switch {
 		case row.Align == "right":
-			line = renderRowRight(&p, row, env, sep)
+			line = renderRowRight(&p, row, rowEnv, sep)
 		case cfg.Powerline && env.colorEnabled:
-			line = renderRowPowerline(&p, row, env)
+			line = renderRowPowerline(&p, row, rowEnv)
 		default:
-			line = renderRowNatural(&p, row, env, sep)
+			line = renderRowNatural(&p, row, rowEnv, sep)
 		}
 		if line != "" {
 			lines = append(lines, line)
@@ -1000,16 +1066,18 @@ func renderRowRight(p *payload, row Row, env renderEnv, sep string) string {
 // renderEnv carries per-call state from Render to each segment renderer.
 // Segment functions read these fields but never mutate them.
 type renderEnv struct {
-	cwd            string // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
-	colorEnabled   bool   // false when NoColor was set on Options
-	nowUnix        int64  // wall clock at the start of Render, for time-based segments
-	ttyCols        int    // detected terminal columns, 0 when unknown
-	ttyRows        int    // detected terminal rows, 0 when unknown
-	margin         int    // plain leading spaces per row; usable bg-fill width = ttyCols - 2*margin
-	powerlineStyle string // "thin" (default) | "solid"; used by renderRowPowerline via pickGlyph
-	capStyle       string // "" / "round" / "square" / "slant"; "" → round
-	version        string // ccsb version forwarded from Options.Version
-	schemaIssue    bool   // true when the inbound payload looks broken; drives the schema_health segment
+	cwd            string   // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
+	colorEnabled   bool     // false when NoColor was set on Options
+	nowUnix        int64    // wall clock at the start of Render, for time-based segments
+	ttyCols        int      // detected terminal columns, 0 when unknown
+	ttyRows        int      // detected terminal rows, 0 when unknown
+	margin         int      // plain leading spaces per row; usable bg-fill width = ttyCols - 2*margin
+	powerlineStyle string   // "thin" (default) | "solid"; used by renderRowPowerline via pickGlyph
+	capStyle       string   // "" / "round" / "square" / "slant"; "" → round
+	version        string   // ccsb version forwarded from Options.Version
+	schemaIssue    bool     // true when the inbound payload looks broken; drives the schema_health segment
+	globalPalette  []string // Config.Palette (or defaultGlobalPalette when unset); see effectiveSegmentBg
+	paletteStart   int      // offset into globalPalette for the current output row (= rowOutputIndex * stride)
 }
 
 // detectSchemaIssue returns true when the inbound JSON payload looks
@@ -1250,7 +1318,7 @@ func collectVisibleSegments(p *payload, row Row, env renderEnv) []renderedSeg {
 		if s == "" {
 			continue
 		}
-		bg := effectiveSegmentBg(row, seg, len(visible), true)
+		bg := effectiveSegmentBg(row, seg, len(visible), env.globalPalette, env.paletteStart, true)
 		visible = append(visible, renderedSeg{body: s, bg: bg, align: seg.Align})
 	}
 	return visible
