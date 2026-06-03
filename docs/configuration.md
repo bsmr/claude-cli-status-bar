@@ -45,13 +45,17 @@ renderer with the default layout.
 | `margin`    | int             | `2`           | Plain (no-bg) leading spaces per row; usable bg-fill width is shrunk by `2*margin`. Leaves room for Claude Code's built-in statusLine chrome on each side. Set to `0` to disable. Defaults to `2` when omitted; negative values clamp to `0`. |
 | `powerline_style` | string    | `"thin"`      | Chevron glyph in Powerline mode. `"thin"` (default) renders U+E0B1; `"solid"` renders U+E0B0 as a filled wedge. Unknown values silently fall back to `"thin"`. |
 | `cap_style` | string | `"round"` | End-cap glyph style applied when a row's `caps` is true. `"round"` (default) renders U+E0B6 / U+E0B4 half-circles; `"square"` extends the bg with a 1-col plain space on each side; `"slant"` renders U+E0BC / U+E0BA filled triangles. Unknown values fall back to `"round"`. |
+| `palette` | array of strings | `232`…`240` | Shared global background palette for Powerline mode. Each output row starts at index `rowIndex * palette_stride` and rotates through the palette per segment. A per-row `palette` (see [Powerline](#powerline)) overrides this for that one row. When omitted, the built-in nine-grey monotonic dark→light default (`232`…`240`) is used. |
+| `palette_stride` | int | `2` | Per-output-row offset into the global `palette`: row N's first segment starts at `N * palette_stride`, so every row (including reflow-inserted rows) begins a couple of shades brighter than the one above and the dark→light gradient never jumps or repeats. `0` uses the default (`2`); negative clamps to `0`. |
 
 When `rows` is omitted or empty, the renderer uses the built-in
 default. The default is the full Powerline layout — two rows with
-round end caps, a solid chevron, a monotonic grey palette per row,
-threshold-coloured percentages, and a right-aligned version stamp.
-`powerline`, `powerline_style`, and `cap_style` are also filled in
-from the default when (and only when) `rows` is empty, so the
+round end caps, a solid chevron, a shared monotonic grey palette with
+a per-output-row stride, threshold-coloured percentages, and a
+right-aligned version stamp.
+`powerline`, `powerline_style`, `cap_style`, `palette`, and
+`palette_stride` are also filled in from the default when (and only
+when) `rows` is empty, so the
 out-of-the-box look does not depend on a config file. See
 [Default layout](#default-layout) for the exact equivalent JSON.
 
@@ -702,10 +706,11 @@ in from the built-in `defaultConfig` when `rows` is absent):
     "powerline": true,
     "powerline_style": "solid",
     "cap_style": "round",
+    "palette": ["232", "233", "234", "235", "236", "237", "238", "239", "240"],
+    "palette_stride": 2,
     "rows": [
       {
         "caps": true,
-        "palette": ["234", "235", "236", "237", "238"],
         "segments": [
           {"type": "model", "fg": "33", "bold": true, "show_1m_flag": true},
           {"type": "mode"},
@@ -723,11 +728,10 @@ in from the built-in `defaultConfig` when `rows` is absent):
       },
       {
         "caps": true,
-        "palette": ["239", "240", "241", "242"],
         "segments": [
           {"type": "git_branch", "fg": "33"},
           {"type": "lines", "fg": "245"},
-          {"type": "cwd", "fg": "245"},
+          {"type": "cwd", "fg": "245", "shrink": true},
           {"type": "version", "fg": "245", "align": "right"}
         ]
       }
