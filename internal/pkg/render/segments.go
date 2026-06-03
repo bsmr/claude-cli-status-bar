@@ -346,11 +346,13 @@ func renderMode(p *payload, _ Segment, _ renderEnv) string {
 	}
 }
 
-// renderGitBranch reads the branch name from env.cwd/.git/HEAD. With a
-// non-empty Segment.Label, the result is prefixed as "<label>: <branch>".
-// Returns "" when not in a git repo, detached HEAD, or env.cwd is empty.
+// renderGitBranch reads the branch name from env.cwd/.git/HEAD. Segment.Scope
+// selects the submodule-aware repository ("local" default, or "toplevel" for
+// the outermost superproject). With a non-empty Segment.Label, the result is
+// prefixed as "<label>: <branch>". Returns "" when not in a git repo, detached
+// HEAD, or env.cwd is empty.
 func renderGitBranch(_ *payload, s Segment, env renderEnv) string {
-	b := branch(env.cwd)
+	b := branchScoped(env.cwd, s.Scope)
 	if b == "" {
 		return ""
 	}

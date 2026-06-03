@@ -314,6 +314,7 @@ Per-segment additional fields are documented under each type below.
 | `bar_width`     | `context`, `limit_5h`, `limit_7d`    | Circle-bar length in cells. Default `16`; zero or negative falls back to the default. See [`bar_width`](#bar_width). |
 | `thresholds`    | `context`, `limit_5h`, `limit_7d`    | Per-segment percentage-driven `fg` overrides. See [Thresholds](#thresholds). |
 | `threshold_target` | `context`, `limit_5h`, `limit_7d` | `"all"` (default) wraps the whole segment in the threshold `fg`; `"pct"` wraps only the percentage digits. See [Thresholds](#thresholds). |
+| `scope`         | `git_branch`                         | `"local"` (default) reports the nearest repository; `"toplevel"` reports the outermost superproject when `cwd` is inside a submodule. See [`git_branch`](#git_branch). |
 
 ### Thresholds
 
@@ -555,16 +556,36 @@ state.
 Branch name read from `.git/HEAD`, walking up the directory tree from
 `cwd` until a `.git` is found (depth-capped at 30 parents; no `git`
 subprocess). A `.git` pointer file with a `gitdir: <path>` line — the
-shape git emits for worktrees — is followed once; relative `gitdir:`
-paths that resolve outside the current directory are rejected to prevent
-escape. With a non-empty `label`, the output is prefixed:
-`"<label>:<branch>"`. Hidden for detached HEAD, malformed HEAD, no repo,
-or empty cwd.
+shape git emits for worktrees and submodules — is followed once. A
+relative `gitdir:` path that escapes the working tree is honored only
+when it lands in a `.git/modules/` tree (git's canonical submodule
+layout, e.g. `../../.git/modules/<name>`); any other escape (e.g.
+`../../../etc`) is rejected. With a non-empty `label`, the output is
+prefixed: `"<label>: <branch>"`. Hidden for detached HEAD, malformed
+HEAD, no repo, or empty cwd.
+
+The `scope` field selects which repository's branch to report when `cwd`
+is inside a submodule working tree:
+
+- `"local"` (the default, also `""` and any unknown value) — the nearest
+  repository, i.e. the submodule itself.
+- `"toplevel"` — the outermost superproject of the submodule chain. The
+  top-level git dir is the prefix of the resolved gitdir up to the first
+  `.git/modules` component; git flattens nested submodule git dirs there,
+  so a submodule-within-a-submodule still resolves to the outermost repo.
+  Worktree git dirs carry no `modules` component, so `"toplevel"` leaves a
+  worktree's own branch untouched. Outside a submodule, `"toplevel"`
+  equals `"local"`.
 
 ```json
-{"type": "git_branch"}                 // "main"
-{"type": "git_branch", "label": "git"} // "git: main"
+{"type": "git_branch"}                       // "main" (submodule branch in a submodule)
+{"type": "git_branch", "label": "git"}       // "git: main"
+{"type": "git_branch", "scope": "toplevel"}  // superproject branch when cwd is in a submodule
 ```
+
+To show both at once, place two `git_branch` segments with different
+scopes — e.g. `{"scope": "local", "label": "sub"}` next to
+`{"scope": "toplevel", "label": "top"}`.
 
 #### `tty_size`
 

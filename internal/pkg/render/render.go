@@ -273,6 +273,13 @@ type Segment struct {
 	// flag is a no-op. Lets the right-aligned version stamp stay intact
 	// on narrow terminals while cwd shortens to absorb the overflow.
 	Shrink bool `json:"shrink,omitempty"`
+
+	// Scope selects which repository the git_branch segment reports when cwd
+	// is inside a submodule working tree. "local" (the default, also "" and
+	// any unknown value) reports the nearest repository — the submodule
+	// itself. "toplevel" reports the outermost superproject of the submodule
+	// chain. Ignored by all other segment types.
+	Scope string `json:"scope,omitempty"`
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage

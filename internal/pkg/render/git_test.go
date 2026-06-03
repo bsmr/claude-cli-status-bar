@@ -85,6 +85,103 @@ func TestBranch_RejectsGitdirThatEscapesParent(t *testing.T) {
 	}
 }
 
+// submoduleFixture builds a superproject at <root>/super on branch
+// superBranch, with a submodule working tree at <super>/sub whose gitdir
+// lives at <super>/.git/modules/foo on branch subBranch. The submodule .git
+// file uses a relative "gitdir:" pointer, exactly as git emits. It returns
+// the submodule working-tree path.
+func submoduleFixture(t *testing.T, root, superBranch, subBranch string) string {
+	t.Helper()
+	super := filepath.Join(root, "super")
+	mustMkdir(t, filepath.Join(super, ".git"))
+	mustWriteFile(t, filepath.Join(super, ".git", "HEAD"), "ref: refs/heads/"+superBranch+"\n")
+
+	modGit := filepath.Join(super, ".git", "modules", "foo")
+	mustMkdir(t, modGit)
+	mustWriteFile(t, filepath.Join(modGit, "HEAD"), "ref: refs/heads/"+subBranch+"\n")
+
+	sub := filepath.Join(super, "sub")
+	mustMkdir(t, sub)
+	// Relative pointer that escapes the working tree, the canonical submodule shape.
+	mustWriteFile(t, filepath.Join(sub, ".git"), "gitdir: ../.git/modules/foo\n")
+	return sub
+}
+
+func TestBranchScoped_SubmoduleLocalShowsSubmoduleBranch(t *testing.T) {
+	sub := submoduleFixture(t, t.TempDir(), "main", "feature-sub")
+
+	if got := branchScoped(sub, "local"); got != "feature-sub" {
+		t.Errorf("local: got %q, want feature-sub", got)
+	}
+	if got := branchScoped(sub, ""); got != "feature-sub" {
+		t.Errorf("default scope: got %q, want feature-sub", got)
+	}
+}
+
+func TestBranchScoped_SubmoduleToplevelShowsSuperprojectBranch(t *testing.T) {
+	sub := submoduleFixture(t, t.TempDir(), "main", "feature-sub")
+
+	if got := branchScoped(sub, "toplevel"); got != "main" {
+		t.Errorf("toplevel: got %q, want main", got)
+	}
+}
+
+func TestBranchScoped_NestedSubmoduleToplevelReachesOutermost(t *testing.T) {
+	root := t.TempDir()
+	super := filepath.Join(root, "super")
+	mustMkdir(t, filepath.Join(super, ".git"))
+	mustWriteFile(t, filepath.Join(super, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	// git flattens nested submodule gitdirs under <top>/.git/modules/a/modules/b.
+	innerGit := filepath.Join(super, ".git", "modules", "a", "modules", "b")
+	mustMkdir(t, innerGit)
+	mustWriteFile(t, filepath.Join(innerGit, "HEAD"), "ref: refs/heads/inner\n")
+
+	inner := filepath.Join(super, "a", "b")
+	mustMkdir(t, inner)
+	mustWriteFile(t, filepath.Join(inner, ".git"), "gitdir: ../../.git/modules/a/modules/b\n")
+
+	if got := branchScoped(inner, "toplevel"); got != "main" {
+		t.Errorf("nested toplevel: got %q, want main", got)
+	}
+	if got := branchScoped(inner, "local"); got != "inner" {
+		t.Errorf("nested local: got %q, want inner", got)
+	}
+}
+
+func TestBranchScoped_RegularRepoToplevelEqualsLocal(t *testing.T) {
+	dir := t.TempDir()
+	mustMkdir(t, filepath.Join(dir, ".git"))
+	mustWriteFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	if got := branchScoped(dir, "toplevel"); got != "main" {
+		t.Errorf("regular toplevel: got %q, want main", got)
+	}
+	if got := branchScoped(dir, "local"); got != "main" {
+		t.Errorf("regular local: got %q, want main", got)
+	}
+}
+
+func TestBranchScoped_WorktreeToplevelKeepsWorktreeBranch(t *testing.T) {
+	root := t.TempDir()
+	realGit := filepath.Join(root, "main-repo", ".git")
+	mustMkdir(t, realGit)
+	mustWriteFile(t, filepath.Join(realGit, "HEAD"), "ref: refs/heads/main\n")
+	worktreeGit := filepath.Join(realGit, "worktrees", "wt1")
+	mustMkdir(t, worktreeGit)
+	mustWriteFile(t, filepath.Join(worktreeGit, "HEAD"), "ref: refs/heads/wt-branch\n")
+
+	wtDir := filepath.Join(root, "wt1")
+	mustMkdir(t, wtDir)
+	mustWriteFile(t, filepath.Join(wtDir, ".git"), "gitdir: "+worktreeGit+"\n")
+
+	// A worktree gitdir has no "modules" component, so toplevel must NOT
+	// collapse to the main worktree's branch.
+	if got := branchScoped(wtDir, "toplevel"); got != "wt-branch" {
+		t.Errorf("worktree toplevel: got %q, want wt-branch", got)
+	}
+}
+
 func mustMkdir(t *testing.T, p string) {
 	t.Helper()
 	if err := os.MkdirAll(p, 0o755); err != nil {

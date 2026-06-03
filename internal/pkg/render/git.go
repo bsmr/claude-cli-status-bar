@@ -13,10 +13,22 @@ const (
 	maxWalkDepth = 30
 )
 
-// branch returns the current branch name, walking up from start until it
+// branch returns the current branch name for the nearest repository, walking
+// up from start. Equivalent to branchScoped(start, "local").
+func branch(start string) string {
+	return branchScoped(start, "local")
+}
+
+// branchScoped returns the current branch name, walking up from start until it
 // finds a .git directory or .git pointer file. Returns "" for: empty start,
 // not in a repo, detached HEAD, malformed HEAD, or I/O error.
-func branch(start string) string {
+//
+// scope selects which repository's branch to report when start is inside a
+// submodule working tree:
+//   - "local" (also "" and any unknown value): the nearest repository — the
+//     submodule itself when start lies within one.
+//   - "toplevel": the outermost superproject of the submodule chain.
+func branchScoped(start, scope string) string {
 	if start == "" {
 		return ""
 	}
@@ -24,6 +36,11 @@ func branch(start string) string {
 	for range maxWalkDepth {
 		gitDir, ok := resolveGitDir(dir)
 		if ok {
+			if scope == "toplevel" {
+				if top := submoduleTopLevelGitDir(gitDir); top != "" {
+					return readHeadBranch(top)
+				}
+			}
 			return readHeadBranch(gitDir)
 		}
 		parent := filepath.Dir(dir)
@@ -31,6 +48,24 @@ func branch(start string) string {
 			return ""
 		}
 		dir = parent
+	}
+	return ""
+}
+
+// submoduleTopLevelGitDir returns the git dir of the outermost superproject
+// when gitDir has the canonical submodule shape
+// <top>/.git/modules/<name>[/modules/<name>…] — the prefix up to and including
+// the FIRST ".git" component immediately followed by "modules", i.e.
+// <top>/.git. git flattens nested submodule git dirs under that single
+// modules tree, so the first match is always the outermost repository.
+// Returns "" when gitDir is not a submodule git dir (regular repo, worktree,
+// …), in which case toplevel scope falls back to the local branch.
+func submoduleTopLevelGitDir(gitDir string) string {
+	parts := strings.Split(gitDir, string(filepath.Separator))
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == ".git" && parts[i+1] == "modules" {
+			return strings.Join(parts[:i+1], string(filepath.Separator))
+		}
 	}
 	return ""
 }
@@ -64,9 +99,15 @@ func resolveGitDir(dir string) (string, bool) {
 	} else {
 		// Relative paths are resolved against dir.
 		resolved = filepath.Clean(filepath.Join(dir, rest))
-		// Reject relative gitdir: that escapes the parent directory.
 		rel, err := filepath.Rel(dir, resolved)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		if err != nil {
+			return "", false
+		}
+		// A relative gitdir: that escapes the working tree is only legitimate
+		// when it points into a ".git/modules/" tree — the canonical submodule
+		// layout git emits (e.g. "../../.git/modules/<name>"). Any other escape
+		// (e.g. "../../../etc") is rejected.
+		if strings.HasPrefix(rel, "..") && submoduleTopLevelGitDir(resolved) == "" {
 			return "", false
 		}
 	}
