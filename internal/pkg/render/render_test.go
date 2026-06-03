@@ -3204,3 +3204,232 @@ func TestConfig_PaletteJSONRoundtrip(t *testing.T) {
 		t.Errorf("palette_stride round-trip: got %d", out.PaletteStride)
 	}
 }
+
+// --- 0.2.33 dynamic shrink ---------------------------------------------------
+
+func TestSegmentShrink_JSONRoundTrip(t *testing.T) {
+	in := Segment{Type: "cwd", Shrink: true}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"shrink":true`) {
+		t.Errorf("Shrink must encode as \"shrink\":true, got %s", b)
+	}
+	var out Segment
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !out.Shrink {
+		t.Errorf("Shrink must survive round-trip, got %+v", out)
+	}
+	// Zero value must be omitted so existing configs stay byte-stable.
+	z, _ := json.Marshal(Segment{Type: "cwd"})
+	if strings.Contains(string(z), "shrink") {
+		t.Errorf("zero Shrink must be omitted, got %s", z)
+	}
+}
+
+func TestHasAnyShrink(t *testing.T) {
+	none := []Segment{{Type: "text"}, {Type: "cwd"}}
+	if hasAnyShrink(none) {
+		t.Error("no Shrink segment must report false")
+	}
+	some := []Segment{{Type: "text"}, {Type: "cwd", Shrink: true}}
+	if !hasAnyShrink(some) {
+		t.Error("a Shrink segment must report true")
+	}
+}
+
+func TestApplyShrink_NoopWhenTtyColsUnknown(t *testing.T) {
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAAAAAAAAAAAAAA", Shrink: true},
+		{Type: "text", Label: "BBBB"},
+	}}
+	out := applyShrink(&payload{}, row, renderEnv{ttyCols: 0}, false, " | ")
+	if out[0].MaxWidth != 0 {
+		t.Errorf("ttyCols=0 must not set MaxWidth, got %d", out[0].MaxWidth)
+	}
+}
+
+func TestApplyShrink_NoopWhenNoShrinkSegment(t *testing.T) {
+	// Overflowing row, but nothing is marked Shrink.
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAAAAAAAA"},
+		{Type: "text", Label: "BBBBBBBBBB"},
+	}}
+	env := renderEnv{ttyCols: 8, margin: 0}
+	out := applyShrink(&payload{}, row, env, false, " | ")
+	for i, s := range out {
+		if s.MaxWidth != 0 {
+			t.Errorf("segment %d MaxWidth must stay 0, got %d", i, s.MaxWidth)
+		}
+	}
+}
+
+func TestApplyShrink_NoopWhenRowFits(t *testing.T) {
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAA", Shrink: true},
+		{Type: "text", Label: "BBBB"},
+	}}
+	env := renderEnv{ttyCols: 80, margin: 0}
+	out := applyShrink(&payload{}, row, env, false, " | ")
+	if out[0].MaxWidth != 0 {
+		t.Errorf("fitting row must not set MaxWidth, got %d", out[0].MaxWidth)
+	}
+}
+
+func TestApplyShrink_LowersMaxWidthToFitExactly(t *testing.T) {
+	// Widths: shrink body 10, fixed body 6, one " | " separator (3).
+	// used = 10 + 6 + 3 = 19. usable = 14. deficit = 5.
+	// shrink body must drop to 10 - 5 = 5.
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAAAAAAAA", Shrink: true}, // 10
+		{Type: "text", Label: "BBBBBB"},                   // 6
+	}}
+	env := renderEnv{ttyCols: 14, margin: 0}
+	out := applyShrink(&payload{}, row, env, false, " | ")
+	if out[0].MaxWidth != 5 {
+		t.Errorf("shrink MaxWidth = %d, want 5", out[0].MaxWidth)
+	}
+	if out[1].MaxWidth != 0 {
+		t.Errorf("non-shrink segment must be untouched, got %d", out[1].MaxWidth)
+	}
+}
+
+func TestApplyShrink_FloorsAtOneColumn(t *testing.T) {
+	// usable far smaller than the fixed segment alone: shrink can only
+	// reach the 1-col floor; the row still overflows (best-effort).
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAAAAAAAA", Shrink: true}, // 10
+		{Type: "text", Label: "BBBBBBBBBB"},               // 10
+	}}
+	env := renderEnv{ttyCols: 4, margin: 0}
+	out := applyShrink(&payload{}, row, env, false, " | ")
+	if out[0].MaxWidth != 1 {
+		t.Errorf("shrink MaxWidth must floor at 1, got %d", out[0].MaxWidth)
+	}
+}
+
+func TestApplyShrink_NeverRaisesExistingMaxWidth(t *testing.T) {
+	// Fits comfortably; an already-capped shrink segment is left alone.
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAAAAAAAA", Shrink: true, MaxWidth: 4}, // renders width 4
+		{Type: "text", Label: "BB"},
+	}}
+	env := renderEnv{ttyCols: 80, margin: 0}
+	out := applyShrink(&payload{}, row, env, false, " | ")
+	if out[0].MaxWidth != 4 {
+		t.Errorf("existing MaxWidth must be preserved when row fits, got %d", out[0].MaxWidth)
+	}
+}
+
+func TestApplyShrink_LowersPreExistingMaxWidthOnOverflow(t *testing.T) {
+	// Shrink segment already capped at MaxWidth:4 (renderSegment truncates
+	// it to 4 cols, so its measured width is 4). Fixed neighbour is 10 cols.
+	// Sep " | " = 3. used = 4 + 10 + 3 = 17, usable = 9, deficit = 8.
+	// canGive = 4 - 1 = 3, take = min(3, 8) = 3 → MaxWidth lowered to 1.
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAAAAAAAA", Shrink: true, MaxWidth: 4},
+		{Type: "text", Label: "BBBBBBBBBB"},
+	}}
+	env := renderEnv{ttyCols: 9, margin: 0}
+	out := applyShrink(&payload{}, row, env, false, " | ")
+	if out[0].MaxWidth != 1 {
+		t.Errorf("pre-existing MaxWidth must be further lowered toward the floor, got %d", out[0].MaxWidth)
+	}
+}
+
+func TestApplyShrink_DistributesDeficitInRowOrder(t *testing.T) {
+	// Two shrink segments (10 + 10) + fixed (10) + 2 separators (6) = 36.
+	// usable = 30 → deficit 6. First shrink yields all 6 (10→4); second
+	// stays full.
+	row := Row{Segments: []Segment{
+		{Type: "text", Label: "AAAAAAAAAA", Shrink: true}, // 10
+		{Type: "text", Label: "CCCCCCCCCC", Shrink: true}, // 10
+		{Type: "text", Label: "BBBBBBBBBB"},               // 10
+	}}
+	env := renderEnv{ttyCols: 30, margin: 0}
+	out := applyShrink(&payload{}, row, env, false, " | ")
+	if out[0].MaxWidth != 4 {
+		t.Errorf("first shrink MaxWidth = %d, want 4", out[0].MaxWidth)
+	}
+	if out[1].MaxWidth != 0 {
+		t.Errorf("second shrink must stay untouched (deficit already covered), got %d", out[1].MaxWidth)
+	}
+}
+
+func TestApplyShrink_PowerlineWithCapsAccounting(t *testing.T) {
+	// Powerline mode with Caps: used = shrink(10) + fixed(6) +
+	// 1 powerlineSeparatorWidth(3) = 19. usable = ttyCols(14) - 2*margin(0)
+	// - 2 (caps) = 12. deficit = 7. canGive = 10 - 1 = 7 → MaxWidth = 3.
+	row := Row{
+		Caps: true,
+		Segments: []Segment{
+			{Type: "text", Label: "AAAAAAAAAA", Shrink: true}, // 10
+			{Type: "text", Label: "BBBBBB"},                   // 6
+		},
+	}
+	env := renderEnv{ttyCols: 14, margin: 0}
+	out := applyShrink(&payload{}, row, env, true /* powerlineActive */, " | ")
+	if out[0].MaxWidth != 3 {
+		t.Errorf("powerline+caps shrink MaxWidth = %d, want 3", out[0].MaxWidth)
+	}
+}
+
+func TestRender_ShrinkKeepsRightAlignedVersionIntact_CustomConfig(t *testing.T) {
+	// Long branch stand-in + long cwd + right-aligned version on a
+	// narrow tty. cwd carries Shrink, so it must truncate (…) while the
+	// version string survives in full and the row stays within width.
+	raw := []byte(`{"workspace":{"current_dir":"/home/u/very/long/path/to/some-project-dir"}}`)
+	cfg := Config{
+		Width:  40,
+		Margin: new(0),
+		Rows: []Row{{
+			Segments: []Segment{
+				{Type: "text", Label: "feature/some-long-branch-name"},
+				{Type: "cwd", Format: "full", Shrink: true},
+				{Type: "text", Label: "v9.9.9", Align: "right"},
+			},
+		}},
+	}
+	got, err := Render(Options{Config: cfg, NoColor: true}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	line := strings.Split(got, "\n")[0]
+	if !strings.Contains(line, "v9.9.9") {
+		t.Errorf("version must survive in full, got %q", line)
+	}
+	if !strings.Contains(line, "…") {
+		t.Errorf("cwd should have been truncated with an ellipsis, got %q", line)
+	}
+	if w := displayWidth(line); w > 40 {
+		t.Errorf("row width = %d, must not exceed usable 40: %q", w, line)
+	}
+}
+
+func TestRender_ShrinkDefaultConfigProtectsVersion_Powerline(t *testing.T) {
+	// Default config (empty Rows): row 2 is git_branch | lines | cwd |
+	// version(right). With no git dir / lines, only cwd + version show.
+	// A long cwd on a narrow tty must shrink so the version is intact.
+	raw := []byte(`{"workspace":{"current_dir":"/home/u/very/long/path/to/some-project-directory-name"}}`)
+	got, err := Render(Options{
+		Config:  Config{Width: 40},
+		Version: "9.9.9",
+	}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	lines := strings.Split(got, "\n")
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, "v9.9.9") {
+		t.Errorf("default-config version must survive in full, got %q", last)
+	}
+	if !strings.Contains(last, "…") {
+		t.Errorf("default cwd should shrink with an ellipsis, got %q", last)
+	}
+	if w := displayWidth(last); w > 40 {
+		t.Errorf("last row width = %d, must not exceed usable 40: %q", w, last)
+	}
+}

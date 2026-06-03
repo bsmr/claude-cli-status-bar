@@ -257,6 +257,22 @@ type Segment struct {
 	// "no info to gate on" defaults to "keep the segment". Zero
 	// (the default) and negative values disable the gate.
 	MinCols int `json:"min_cols,omitempty"`
+
+	// Shrink, when true, marks this segment as the one that yields
+	// display width when its row would overflow. After reflow, a
+	// pre-pass (applyShrink) measures the row; if the visible content
+	// exceeds the usable width (ttyCols - 2*margin, minus cap columns
+	// when Caps is active), every Shrink-marked segment has its
+	// effective MaxWidth lowered — in row order, each yielding down to
+	// a 1-column floor (the "…" glyph) — until the deficit is covered.
+	// The truncation itself reuses the MaxWidth path (renderSegment →
+	// truncateToWidth), so it is safe only on text-style segments
+	// (cwd, git_branch, text, model, …) for the same reason MaxWidth is.
+	// A user-supplied MaxWidth is only ever lowered further, never
+	// raised. When ttyCols is unknown (0) or the row already fits, the
+	// flag is a no-op. Lets the right-aligned version stamp stay intact
+	// on narrow terminals while cwd shortens to absorb the overflow.
+	Shrink bool `json:"shrink,omitempty"`
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage
@@ -628,7 +644,7 @@ var defaultConfig = Config{
 			Segments: []Segment{
 				{Type: "git_branch", FG: "33"},
 				{Type: "lines", FG: "245"},
-				{Type: "cwd", FG: "245"},
+				{Type: "cwd", FG: "245", Shrink: true},
 				{Type: "version", FG: "245", Align: "right"},
 			},
 		},
@@ -761,6 +777,102 @@ func hasAnyWrap(segs []Segment) bool {
 		}
 	}
 	return false
+}
+
+// shrinkFloor is the minimum MaxWidth an applyShrink candidate is reduced
+// to — one column, which truncateToWidth renders as the single "…" glyph.
+const shrinkFloor = 1
+
+// hasAnyShrink reports whether any segment carries the Shrink flag.
+// Cheap pre-check so applyShrink can skip the per-segment render loop
+// on rows with nothing to shrink.
+func hasAnyShrink(segs []Segment) bool {
+	for _, s := range segs {
+		if s.Shrink {
+			return true
+		}
+	}
+	return false
+}
+
+// applyShrink returns row.Segments unchanged, or — when the row's
+// visible content would overflow the usable width AND the row carries
+// at least one Shrink-marked segment — a copy in which each Shrink
+// segment's effective MaxWidth is lowered (in row order, flooring at
+// shrinkFloor) until the overflow deficit is absorbed. The actual
+// truncation happens later in renderSegment → truncateToWidth; this
+// function only computes and stamps the cap.
+//
+// Measurement mirrors rowOverflows exactly (segment body widths via
+// displayWidth, which strips ANSI; per-style separator cost; cap
+// columns when powerlineActive && Caps), so the gap-free width here
+// matches the real overflow condition — when used > usable a
+// right-aligned segment's padding gap is already zero. Like
+// rowOverflows, the separator term counts visible-1 joins; a
+// natural-mode row with a right-aligned segment actually renders one
+// fewer separator, so the estimate is conservative there (it may shrink
+// a few columns more than strictly necessary, never fewer — the
+// protected segment always stays intact).
+//
+// When ttyCols is unknown (0), no Shrink segment exists, only one
+// segment is visible, or the row already fits, the input slice is
+// returned untouched. A pre-existing MaxWidth is only ever lowered,
+// never raised, because the measured width already reflects it and the
+// new cap is strictly smaller.
+func applyShrink(p *payload, row Row, env renderEnv, powerlineActive bool, sep string) []Segment {
+	if env.ttyCols == 0 || !hasAnyShrink(row.Segments) {
+		return row.Segments
+	}
+	type cand struct {
+		idx   int
+		width int
+	}
+	var cands []cand
+	used := 0
+	visible := 0
+	for i, seg := range row.Segments {
+		body := renderSegment(p, seg, env)
+		if body == "" {
+			continue
+		}
+		w := displayWidth(body)
+		used += w
+		visible++
+		if seg.Shrink {
+			cands = append(cands, cand{idx: i, width: w})
+		}
+	}
+	if len(cands) == 0 || visible <= 1 {
+		return row.Segments
+	}
+	if powerlineActive {
+		used += (visible - 1) * powerlineSeparatorWidth
+	} else {
+		used += (visible - 1) * displayWidth(sep)
+	}
+	usable := env.ttyCols - 2*env.margin
+	if powerlineActive && row.Caps {
+		usable -= 2
+	}
+	deficit := used - usable
+	if deficit <= 0 {
+		return row.Segments
+	}
+	out := make([]Segment, len(row.Segments))
+	copy(out, row.Segments)
+	for _, c := range cands {
+		if deficit <= 0 {
+			break
+		}
+		canGive := c.width - shrinkFloor
+		if canGive <= 0 {
+			continue
+		}
+		take := min(canGive, deficit)
+		out[c.idx].MaxWidth = c.width - take
+		deficit -= take
+	}
+	return out
 }
 
 // rowOverflows reports whether the row's visible rendered width would
@@ -936,6 +1048,7 @@ func Render(opts Options, raw []byte) (string, error) {
 	for outputIdx, row := range rows {
 		rowEnv := env
 		rowEnv.paletteStart = outputIdx * stride
+		row.Segments = applyShrink(&p, row, rowEnv, powerlineActive, sep)
 		var line string
 		switch {
 		case row.Align == "right":
