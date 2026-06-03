@@ -427,6 +427,18 @@ func TestRenderGitBranch_LabelPrefix(t *testing.T) {
 	}
 }
 
+func TestRenderGitBranch_ToplevelScopeFromSubmodule(t *testing.T) {
+	sub := submoduleFixture(t, t.TempDir(), "main", "feature-sub")
+
+	env := renderEnv{cwd: sub}
+	if got := renderGitBranch(&payload{}, Segment{}, env); got != "feature-sub" {
+		t.Errorf("default scope: got %q, want feature-sub", got)
+	}
+	if got := renderGitBranch(&payload{}, Segment{Scope: "toplevel", Label: "top"}, env); got != "top: main" {
+		t.Errorf("toplevel scope: got %q, want \"top: main\"", got)
+	}
+}
+
 func TestRenderTTYSize_DefaultFormat(t *testing.T) {
 	env := renderEnv{ttyCols: 128, ttyRows: 37}
 	got := renderTTYSize(&payload{}, Segment{Type: "tty_size"}, env)
