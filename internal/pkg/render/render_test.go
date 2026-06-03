@@ -35,8 +35,8 @@ func TestRender_EmptyConfigUsesDefaultConfig(t *testing.T) {
 	}
 	// Default config enables Powerline + round caps — first row must
 	// open with the U+E0B6 left-cap glyph in fg=234 (palette[0]).
-	if !strings.Contains(got, "\x1b[38;5;234m") {
-		t.Errorf("default config must produce Powerline left-cap, got %q", got)
+	if !strings.Contains(got, "\x1b[38;5;232m") {
+		t.Errorf("default config must produce Powerline left-cap (fg=232 = globalPalette[0]), got %q", got)
 	}
 }
 
@@ -186,7 +186,11 @@ func TestRender_GoldenFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read payload: %v", err)
 			}
-			got, err := Render(Options{NoColor: true}, raw)
+			// Pin the terminal width so the golden fixtures stay
+			// reflow-agnostic: a developer running tests inside an 80-col
+			// pane would otherwise trip rowOverflows and split row 1 in
+			// two. 200 cols comfortably covers every fixture's row 1.
+			got, err := Render(Options{NoColor: true, Config: Config{Width: 200}}, raw)
 			if err != nil {
 				t.Fatalf("Render: %v", err)
 			}
@@ -747,15 +751,16 @@ func TestRenderRowPowerline_NoPaddingWhenTTYIsZero(t *testing.T) {
 	}
 }
 
-func TestRenderRowPowerline_NoBgUsesDefaultPalette(t *testing.T) {
-	// A row with no Bg and no Palette falls back to defaultPalette in
-	// Powerline mode. The first visible segment picks defaultPalette[0]
-	// ("234"), so a bg escape MUST appear.
+func TestRenderRowPowerline_NoBgUsesGlobalPalette(t *testing.T) {
+	// A row with no Bg and no Palette falls back to env.globalPalette in
+	// Powerline mode. The first visible segment picks globalPalette[0]
+	// (here "232" — the dark end of the default 9-grey palette), so a bg
+	// escape MUST appear.
 	row := Row{Bg: "", Segments: []Segment{{Type: "text", Label: "A"}}}
-	env := renderEnv{colorEnabled: true, ttyCols: 80}
+	env := renderEnv{colorEnabled: true, ttyCols: 80, globalPalette: defaultGlobalPalette}
 	got := renderRowPowerline(&payload{}, row, env)
-	if !strings.Contains(got, "\x1b[48;5;234m") {
-		t.Errorf("no-Bg row must use defaultPalette[0] = 234, got %q", got)
+	if !strings.Contains(got, "\x1b[48;5;232m") {
+		t.Errorf("no-Bg row must use globalPalette[0] = 232, got %q", got)
 	}
 }
 
@@ -1192,6 +1197,8 @@ func TestEffectiveSegmentBg(t *testing.T) {
 		row             Row
 		seg             Segment
 		visibleIndex    int
+		globalPalette   []string
+		paletteStart    int
 		powerlineActive bool
 		want            string
 	}{
@@ -1202,11 +1209,20 @@ func TestEffectiveSegmentBg(t *testing.T) {
 			want: "200",
 		},
 		{
-			name:         "Palette rotates by visibleIndex",
+			name:         "Row.Palette rotates by visibleIndex",
 			row:          Row{Palette: []string{"234", "236", "238"}},
 			seg:          Segment{},
 			visibleIndex: 4,
 			want:         "236", // 4 % 3 == 1
+		},
+		{
+			name:          "Row.Palette beats globalPalette",
+			row:           Row{Palette: []string{"100"}},
+			seg:           Segment{},
+			visibleIndex:  0,
+			globalPalette: []string{"232", "233", "234"},
+			paletteStart:  2,
+			want:          "100",
 		},
 		{
 			name: "Row.Bg used when no Palette and no Segment.BG",
@@ -1215,12 +1231,24 @@ func TestEffectiveSegmentBg(t *testing.T) {
 			want: "100",
 		},
 		{
-			name:            "defaultPalette when Powerline and no other source",
+			name:            "globalPalette when Powerline and no row source",
 			row:             Row{},
 			seg:             Segment{},
 			visibleIndex:    1,
+			globalPalette:   []string{"232", "233", "234", "235"},
+			paletteStart:    0,
 			powerlineActive: true,
-			want:            "236", // defaultPalette[1]
+			want:            "233", // (0+1) % 4
+		},
+		{
+			name:            "globalPalette honors paletteStart offset",
+			row:             Row{},
+			seg:             Segment{},
+			visibleIndex:    0,
+			globalPalette:   []string{"232", "233", "234", "235", "236"},
+			paletteStart:    2,
+			powerlineActive: true,
+			want:            "234", // (2+0) % 5
 		},
 		{
 			name:            "empty string when no Powerline and no source",
@@ -1229,10 +1257,17 @@ func TestEffectiveSegmentBg(t *testing.T) {
 			powerlineActive: false,
 			want:            "",
 		},
+		{
+			name:            "empty string when Powerline but globalPalette empty",
+			row:             Row{},
+			seg:             Segment{},
+			powerlineActive: true,
+			want:            "",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := effectiveSegmentBg(c.row, c.seg, c.visibleIndex, c.powerlineActive)
+			got := effectiveSegmentBg(c.row, c.seg, c.visibleIndex, c.globalPalette, c.paletteStart, c.powerlineActive)
 			if got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
@@ -1244,7 +1279,7 @@ func TestEffectiveSegmentBg_PaletteRotation(t *testing.T) {
 	row := Row{Palette: []string{"234", "236", "238"}}
 	want := []string{"234", "236", "238", "234", "236"}
 	for i, w := range want {
-		if got := effectiveSegmentBg(row, Segment{}, i, true); got != w {
+		if got := effectiveSegmentBg(row, Segment{}, i, nil, 0, true); got != w {
 			t.Errorf("visibleIndex=%d: got %q, want %q", i, got, w)
 		}
 	}
@@ -1448,7 +1483,7 @@ func TestRenderRowPowerline_DefaultGlyphIsThin(t *testing.T) {
 	}
 }
 
-func TestRenderRowPowerline_DefaultPaletteUsedWhenNoConfig(t *testing.T) {
+func TestRenderRowPowerline_GlobalPaletteUsedWhenNoRowSource(t *testing.T) {
 	row := Row{
 		Segments: []Segment{
 			{Type: "text", Label: "A"},
@@ -1456,11 +1491,13 @@ func TestRenderRowPowerline_DefaultPaletteUsedWhenNoConfig(t *testing.T) {
 			{Type: "text", Label: "C"},
 		},
 	}
-	env := renderEnv{colorEnabled: true}
+	env := renderEnv{colorEnabled: true, globalPalette: defaultGlobalPalette}
 	got := renderRowPowerline(&payload{}, row, env)
-	for _, want := range []string{"\x1b[48;5;234m", "\x1b[48;5;236m", "\x1b[48;5;238m"} {
+	// paletteStart=0, stride=1 (default within this row): segments map
+	// to globalPalette[0..2] = "232", "233", "234".
+	for _, want := range []string{"\x1b[48;5;232m", "\x1b[48;5;233m", "\x1b[48;5;234m"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("default-palette bg %q missing\nfull: %q", want, got)
+			t.Errorf("global-palette bg %q missing\nfull: %q", want, got)
 		}
 	}
 }
@@ -2875,5 +2912,295 @@ func TestRender_MinColsZeroIsDisabled(t *testing.T) {
 	got, _ := Render(Options{Config: cfg, NoColor: true}, []byte(`{}`))
 	if !strings.Contains(got, "Z") {
 		t.Errorf("MinCols=0 must not gate the segment, got %q", got)
+	}
+}
+
+// --- 0.2.32 shared-palette / per-output-row stride ------------------------
+
+// TestRender_GlobalPaletteDefaultIsNineGreys pins the default global
+// palette so a future tweak to the visual identity is a conscious
+// breaking change.
+func TestRender_GlobalPaletteDefaultIsNineGreys(t *testing.T) {
+	want := []string{"232", "233", "234", "235", "236", "237", "238", "239", "240"}
+	if len(defaultGlobalPalette) != len(want) {
+		t.Fatalf("defaultGlobalPalette length: got %d, want %d", len(defaultGlobalPalette), len(want))
+	}
+	for i, w := range want {
+		if defaultGlobalPalette[i] != w {
+			t.Errorf("defaultGlobalPalette[%d]: got %q, want %q", i, defaultGlobalPalette[i], w)
+		}
+	}
+	if defaultPaletteStride != 2 {
+		t.Errorf("defaultPaletteStride: got %d, want 2", defaultPaletteStride)
+	}
+}
+
+// TestRender_DefaultConfigUsesSharedPalette verifies that the default
+// config no longer carries per-row Palette entries — everything goes
+// through Config.Palette + paletteStart now.
+func TestRender_DefaultConfigUsesSharedPalette(t *testing.T) {
+	if len(defaultConfig.Palette) == 0 {
+		t.Fatalf("defaultConfig.Palette must be set")
+	}
+	if defaultConfig.PaletteStride != defaultPaletteStride {
+		t.Errorf("defaultConfig.PaletteStride: got %d, want %d", defaultConfig.PaletteStride, defaultPaletteStride)
+	}
+	for i, row := range defaultConfig.Rows {
+		if len(row.Palette) != 0 {
+			t.Errorf("defaultConfig.Rows[%d].Palette must be empty (uses shared global palette), got %v", i, row.Palette)
+		}
+	}
+}
+
+// TestRender_TwoRowsBgStartsTwoShadesBrighter exercises the wide-tty
+// path (no wrap): row 0 starts at globalPalette[0] = 232, row 1 at
+// globalPalette[2] = 234 (stride 2).
+func TestRender_TwoRowsBgStartsTwoShadesBrighter(t *testing.T) {
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus 4.7"},
+		"workspace": {"current_dir": "/tmp/proj"},
+		"rate_limits": {
+			"five_hour": {"used_percentage": 10, "resets_at": 9999999999},
+			"seven_day": {"used_percentage": 20, "resets_at": 9999999999}
+		}
+	}`)
+	// Width 200 keeps row 0 from wrapping.
+	cfg := Config{Width: 200}
+	got, err := Render(Options{Config: cfg}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	rows := strings.Split(got, "\n")
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows, got %d:\n%s", len(rows), got)
+	}
+	if !strings.Contains(rows[0], "\x1b[48;5;232m") {
+		t.Errorf("row 0 first cell must be bg=232 (globalPalette[0]):\n%s", rows[0])
+	}
+	if !strings.Contains(rows[1], "\x1b[48;5;234m") {
+		t.Errorf("row 1 first cell must be bg=234 (globalPalette[2], stride 2):\n%s", rows[1])
+	}
+}
+
+// TestRender_ThreeRowsAfterWrapStartsMonotonic is the regression test for
+// the original bug: when row 0 reflows into two rows because of width,
+// the wrap row must NOT restart at the parent's palette[0]. With stride
+// 2 and 9 greys, the output rows must start at 232, 234, 236.
+func TestRender_ThreeRowsAfterWrapStartsMonotonic(t *testing.T) {
+	raw := []byte(`{
+		"session_id": "s",
+		"model": {"display_name": "Opus 4.7"},
+		"workspace": {"current_dir": "/tmp/proj"},
+		"rate_limits": {
+			"five_hour": {"used_percentage": 42, "resets_at": 9999999999},
+			"seven_day": {"used_percentage": 17, "resets_at": 9999999999}
+		}
+	}`)
+	// Width 50 forces the limit_5h / limit_7d wrap-marked segments into
+	// their own reflowed row.
+	cfg := Config{Width: 50}
+	got, err := Render(Options{Config: cfg}, raw)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	rows := strings.Split(got, "\n")
+	if len(rows) != 3 {
+		t.Fatalf("want 3 rows after reflow, got %d:\n%s", len(rows), got)
+	}
+	// outputIdx * stride: 0, 2, 4 → globalPalette[0,2,4] = 232, 234, 236.
+	wants := []string{"\x1b[48;5;232m", "\x1b[48;5;234m", "\x1b[48;5;236m"}
+	for i, want := range wants {
+		if !strings.Contains(rows[i], want) {
+			t.Errorf("row %d must start with bg %q after reflow:\n%s", i, want, rows[i])
+		}
+		// No two adjacent output rows may start with the same bg — that
+		// was the visible symptom of the bug.
+		if i > 0 {
+			prev := wants[i-1]
+			if strings.HasPrefix(stripANSI(rows[i]), stripANSI(rows[i-1])) {
+				t.Errorf("row %d must start brighter than row %d (prev bg %q)", i, i-1, prev)
+			}
+		}
+	}
+}
+
+// TestRender_RowPaletteOverridesGlobal verifies that a per-row Palette
+// still wins over Config.Palette — the documented escape hatch for
+// power users.
+func TestRender_RowPaletteOverridesGlobal(t *testing.T) {
+	cfg := Config{
+		Width:     200,
+		Margin:    new(0),
+		Powerline: true,
+		Palette:   []string{"232", "233", "234"},
+		Rows: []Row{
+			{
+				Palette: []string{"100", "101"}, // overrides global
+				Segments: []Segment{
+					{Type: "text", Label: "A"},
+					{Type: "text", Label: "B"},
+				},
+			},
+		},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(got, "\x1b[48;5;100m") {
+		t.Errorf("Row.Palette[0]=100 must win over Config.Palette:\n%s", got)
+	}
+	if !strings.Contains(got, "\x1b[48;5;101m") {
+		t.Errorf("Row.Palette[1]=101 must win over Config.Palette:\n%s", got)
+	}
+	if strings.Contains(got, "\x1b[48;5;232m") {
+		t.Errorf("Config.Palette must NOT leak through Row.Palette override:\n%s", got)
+	}
+}
+
+// TestRender_CustomPaletteStride verifies that a non-default stride is
+// honoured. Stride 1 → row N starts one shade brighter than row N-1.
+func TestRender_CustomPaletteStride(t *testing.T) {
+	cfg := Config{
+		Width:         200,
+		Margin:        new(0),
+		Powerline:     true,
+		Palette:       []string{"232", "233", "234", "235", "236"},
+		PaletteStride: 1,
+		Rows: []Row{
+			{Segments: []Segment{{Type: "text", Label: "A"}}},
+			{Segments: []Segment{{Type: "text", Label: "B"}}},
+			{Segments: []Segment{{Type: "text", Label: "C"}}},
+		},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	rows := strings.Split(got, "\n")
+	if len(rows) != 3 {
+		t.Fatalf("want 3 rows, got %d", len(rows))
+	}
+	wants := []string{"232", "233", "234"}
+	for i, w := range wants {
+		seq := "\x1b[48;5;" + w + "m"
+		if !strings.Contains(rows[i], seq) {
+			t.Errorf("row %d: want bg %s, got %q", i, w, rows[i])
+		}
+	}
+}
+
+// TestRender_PaletteStrideWrapsAroundCleanly verifies the modulo
+// behaviour when paletteStart + visibleIndex exceeds the palette
+// length: we must rotate, not crash.
+func TestRender_PaletteStrideWrapsAroundCleanly(t *testing.T) {
+	cfg := Config{
+		Width:         200,
+		Margin:        new(0),
+		Powerline:     true,
+		Palette:       []string{"232", "233", "234"},
+		PaletteStride: 2,
+		Rows: []Row{
+			{Segments: []Segment{{Type: "text", Label: "A"}}}, // start 0 → 232
+			{Segments: []Segment{{Type: "text", Label: "B"}}}, // start 2 → 234
+			{Segments: []Segment{{Type: "text", Label: "C"}}}, // start 4 % 3 = 1 → 233
+		},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	rows := strings.Split(got, "\n")
+	if len(rows) != 3 {
+		t.Fatalf("want 3 rows, got %d", len(rows))
+	}
+	for i, w := range []string{"232", "234", "233"} {
+		if !strings.Contains(rows[i], "\x1b[48;5;"+w+"m") {
+			t.Errorf("row %d: want bg %s, got %q", i, w, rows[i])
+		}
+	}
+}
+
+// TestRender_PaletteStrideZeroUsesDefault verifies that Config.PaletteStride=0
+// falls back to defaultPaletteStride (=2) so old configs that never set the
+// field keep getting the documented per-row brighten step.
+func TestRender_PaletteStrideZeroUsesDefault(t *testing.T) {
+	cfg := Config{
+		Width:     200,
+		Margin:    new(0),
+		Powerline: true,
+		Palette:   defaultGlobalPalette,
+		// PaletteStride intentionally zero
+		Rows: []Row{
+			{Segments: []Segment{{Type: "text", Label: "A"}}},
+			{Segments: []Segment{{Type: "text", Label: "B"}}},
+		},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	rows := strings.Split(got, "\n")
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(rows))
+	}
+	if !strings.Contains(rows[0], "\x1b[48;5;232m") {
+		t.Errorf("row 0: want bg 232, got %q", rows[0])
+	}
+	if !strings.Contains(rows[1], "\x1b[48;5;234m") {
+		t.Errorf("row 1 with stride=0 must default to stride=2 → 234, got %q", rows[1])
+	}
+}
+
+// TestConfig_EffectivePaletteStride documents the stride-resolution
+// rules at the field level.
+func TestConfig_EffectivePaletteStride(t *testing.T) {
+	cases := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"zero defaults", 0, defaultPaletteStride},
+		{"positive used", 4, 4},
+		{"negative clamps to zero", -3, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := Config{PaletteStride: c.in}
+			if got := cfg.effectivePaletteStride(); got != c.want {
+				t.Errorf("got %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// TestConfig_PaletteJSONRoundtrip verifies the new field marshals
+// and unmarshals cleanly so users can pin a custom palette in their
+// config file.
+func TestConfig_PaletteJSONRoundtrip(t *testing.T) {
+	in := Config{
+		Palette:       []string{"232", "234", "236"},
+		PaletteStride: 3,
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"palette":["232","234","236"]`) {
+		t.Errorf("palette missing from JSON: %s", data)
+	}
+	if !strings.Contains(string(data), `"palette_stride":3`) {
+		t.Errorf("palette_stride missing from JSON: %s", data)
+	}
+	var out Config
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(out.Palette) != 3 || out.Palette[0] != "232" {
+		t.Errorf("palette round-trip: got %v", out.Palette)
+	}
+	if out.PaletteStride != 3 {
+		t.Errorf("palette_stride round-trip: got %d", out.PaletteStride)
 	}
 }
