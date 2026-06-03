@@ -14,7 +14,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** active development — `0.2.31`. The native renderer is the
+> **Status:** active development — `0.2.34`. The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
