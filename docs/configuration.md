@@ -765,7 +765,7 @@ Output (ANSI stripped, valid payload — `schema_health` is hidden):
 
 ```
   Opus 4.7 1M  🧠  ●●●◑○○○○○○○○○○○○ 22% 217k/1M  5h: ◔○○○○○○○ 5% · 4h25m  7d: ◔○○○○○○○ 5% · 6d2h
-  main  +546 −107  claude-cli-status-bar                                                                          v0.2.16
+  main  +546 −107  claude-cli-status-bar                                                                          v0.2.37
 ```
 
 If the inbound JSON payload from Claude Code looks broken (top-level

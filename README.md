@@ -1,9 +1,5 @@
 # claude-cli-status-bar
 
-> **Note:** The Go vanity URL `go.muehmer.eu/claude-cli-status-bar` is
-> not yet active. Install from the pre-built binaries (see [Install](#install))
-> or [build from source](#build-from-source) until it is wired up.
-
 ![ccsb rendering a multi-row Powerline statusline with model, context bar, 5h and 7d rate-limit bars, git branch, lines diff, cwd, and version](docs/img/screenshot.png)
 
 A native [statusLine](https://docs.claude.com/en/docs/claude-code/statusline)
@@ -14,7 +10,8 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** active development — `0.2.35`. The native renderer is the
+> **Status:** feature-complete as of `0.2.37`; further `0.2.x` releases
+> are bugfix-only. The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
@@ -99,8 +96,12 @@ go build -o bin/ccsb ./cmd/ccsb
 install -m 0755 bin/ccsb ~/.local/bin/ccsb     # or anywhere on $PATH
 ```
 
-Once the vanity URL is up, `go install go.muehmer.eu/claude-cli-status-bar/cmd/ccsb@vX.Y.Z`
-will resolve directly without cloning.
+The vanity URL resolves directly, so you can install a tagged release
+without cloning:
+
+```bash
+go install go.muehmer.eu/claude-cli-status-bar/cmd/ccsb@vX.Y.Z   # or @latest
+```
 
 The version segment reads its string from `runtime/debug.ReadBuildInfo()`:
 a binary built from a checked-out tag reports that tag (`v0.2.14`), an
@@ -156,22 +157,19 @@ section and the full segment vocabulary are documented in
 - **0.1.x** — proxy mode, capture, install/uninstall machinery, the
   configurable native renderer, and the `ccsb mode` subcommand.
 - **0.2.x** — Powerline rendering with row-bg fill, chevron transitions,
-  opt-in end caps, terminal-size detection, auto-detected version
+  opt-in end caps, terminal-size detection with automatic row-overflow
+  reflow and per-segment dynamic `shrink`, auto-detected version
   segment, row- and per-segment right-alignment, per-segment
   configurable bar widths, a full Powerline default layout out of the
-  box, a `ccsb config reset` subcommand, and a four-rung
-  schema-robustness ladder (per-segment isolated parsing, `.diag`
-  drift logger, `ccsb doctor` schema-check, persistent
-  `schema_version` tracking).
-- **0.2.25 release pipeline** — GoReleaser plus GitHub Actions:
-  every `v*.*.*` tag push to the GitHub mirror builds the
-  cross-platform binaries and publishes a Release; every push or PR
-  runs `go vet`, `go test -race -cover`, and `gofmt`.
-- **0.3.x** — major new directions, opened once 0.2.x is closed
-  with the planned hygiene patches (proxy-flake fix + Windows
-  build tags in 0.2.26, lint-cleanup in 0.2.27).
-- **Later** — a GoReleaser-based release pipeline producing
-  cross-platform binaries on GitHub Releases.
+  box, submodule-aware `git_branch` scope resolution, a `ccsb config
+  reset` subcommand, a four-rung schema-robustness ladder (per-segment
+  isolated parsing, `.diag` drift logger, `ccsb doctor` schema-check,
+  persistent `schema_version` tracking), and a GoReleaser + GitHub
+  Actions release pipeline (every `v*.*.*` tag builds the cross-platform
+  binaries and publishes a Release; every push or PR runs `go vet`,
+  `go test -race -cover`, and `gofmt`). **Feature-complete as of
+  `0.2.37` — subsequent `0.2.x` releases are bugfix-only.**
+- **0.3.x** — reserved for major new directions; not yet opened.
 
 ## Background
 
