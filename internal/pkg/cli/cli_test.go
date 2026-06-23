@@ -27,10 +27,11 @@ func newEnv(t *testing.T) *env {
 	dir := t.TempDir()
 	return &env{
 		paths: cli.Paths{
-			Settings: filepath.Join(dir, "settings.json"),
-			Config:   filepath.Join(dir, "ccsb-config.json"),
-			Capture:  filepath.Join(dir, "captures"),
-			Self:     "/usr/local/bin/ccsb-test",
+			Settings:        filepath.Join(dir, "settings.json"),
+			Config:          filepath.Join(dir, "ccsb-config.json"),
+			Capture:         filepath.Join(dir, "captures"),
+			Self:            "/usr/local/bin/ccsb-test",
+			ClaudeSkillsDir: filepath.Join(dir, "claude-skills"),
 		},
 	}
 }
@@ -451,6 +452,14 @@ func TestNewFromOS_NoColorUnset(t *testing.T) {
 	}
 	if flags.NoColor {
 		t.Errorf("Flags.NoColor: want false when NO_COLOR is unset/empty")
+	}
+}
+
+func TestResolvePaths_ClaudeSkillsDir(t *testing.T) {
+	got := cli.ResolvePaths(cli.Env{Home: "/home/u"})
+	want := "/home/u/.claude/skills"
+	if got.ClaudeSkillsDir != want {
+		t.Errorf("ClaudeSkillsDir: got %q, want %q", got.ClaudeSkillsDir, want)
 	}
 }
 
