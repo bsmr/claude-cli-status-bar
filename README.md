@@ -139,6 +139,27 @@ other command, the existing argv is seeded as `proxy.command` /
 `uninstall` only proceeds when `statusLine` currently points at this binary —
 manual edits since install are never overwritten.
 
+### AI configuration wizard (optional)
+
+If you use Claude Code, install the AI-powered configuration wizard:
+
+```bash
+ccsb install-skill
+```
+
+This writes `~/.claude/skills/ccsb-wizard.md`. Inside Claude Code, type
+`/ccsb-wizard` to start an interactive configuration dialogue. Claude reads
+your current config, checks your NerdFont setup, and adjusts the display
+through natural-language questions.
+
+Re-run `ccsb install-skill` after updating ccsb to get the latest skill version.
+
+To remove:
+
+```bash
+ccsb uninstall-skill
+```
+
 ## File locations
 
 | Purpose | Path |

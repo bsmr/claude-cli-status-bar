@@ -25,10 +25,11 @@ import (
 // supplied by the caller (resolved from the environment) rather than read
 // inside this package so tests can inject temporary paths.
 type Paths struct {
-	Settings string // ~/.claude/settings.json
-	Config   string // $XDG_CONFIG_HOME/ccsb/config.json
-	Capture  string // $XDG_STATE_HOME/ccsb/captures
-	Self     string // absolute path of the running ccsb binary
+	Settings        string // ~/.claude/settings.json
+	Config          string // $XDG_CONFIG_HOME/ccsb/config.json
+	Capture         string // $XDG_STATE_HOME/ccsb/captures
+	Self            string // absolute path of the running ccsb binary
+	ClaudeSkillsDir string // ~/.claude/skills/
 }
 
 // Env carries the environment values used to derive Paths.
@@ -51,10 +52,11 @@ type Flags struct {
 // ResolvePaths derives Paths from environment values.
 func ResolvePaths(e Env) Paths {
 	return Paths{
-		Settings: claudesettings.DefaultPath(e.Home),
-		Config:   config.DefaultPath(e.Home, e.XDGConfigHome),
-		Capture:  capture.DefaultDir(e.Home, e.XDGStateHome),
-		Self:     e.Self,
+		Settings:        claudesettings.DefaultPath(e.Home),
+		Config:          config.DefaultPath(e.Home, e.XDGConfigHome),
+		Capture:         capture.DefaultDir(e.Home, e.XDGStateHome),
+		Self:            e.Self,
+		ClaudeSkillsDir: filepath.Join(e.Home, ".claude", "skills"),
 	}
 }
 
@@ -87,7 +89,7 @@ type UnknownSubcommandError struct {
 }
 
 func (e *UnknownSubcommandError) Error() string {
-	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, config, doctor, version, help)", e.Name)
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, config, doctor, install-skill, uninstall-skill, version, help)", e.Name)
 }
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
@@ -115,6 +117,10 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runConfig(p, args[1:], stdout)
 	case "doctor":
 		return runDoctor(p, stdout)
+	case "install-skill":
+		return runInstallSkill(p, stdout)
+	case "uninstall-skill":
+		return runUninstallSkill(p, stdout)
 	default:
 		return &UnknownSubcommandError{Name: args[0]}
 	}
@@ -287,6 +293,11 @@ Subcommands:
   doctor      Diagnose and auto-fix configuration problems: re-installs if
               settings.json is not hooked; switches to native mode if the
               proxy command is circular, another ccsb binary, or missing.
+  install-skill   Extract the ccsb-wizard Claude Code skill to
+              ~/.claude/skills/ccsb-wizard.md. Run /ccsb-wizard inside
+              Claude Code to start an AI-guided configuration dialogue.
+              Re-run after updating ccsb to get the latest skill version.
+  uninstall-skill Remove ccsb-wizard.md from ~/.claude/skills/.
   version     Print the ccsb version. Aliases: -v, --version.
   help        Print this message.
 `
