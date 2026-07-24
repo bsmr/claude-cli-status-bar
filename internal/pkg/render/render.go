@@ -231,6 +231,25 @@ type Segment struct {
 	// Unknown values fall back to "all".
 	ThresholdTarget string `json:"threshold_target,omitempty"`
 
+	// BarFG overrides the foreground of the bar glyphs only, independent
+	// of the segment FG and the percentage colour, on bar-drawing
+	// segments (context, limit_5h, limit_7d). BarThresholds is the
+	// reactive variant: a percentage-keyed palette (highest matching Min
+	// wins) that overrides BarFG. Together they let a dimmed bar sit next
+	// to a bright, threshold-reactive number. The bar wrap closes back to
+	// the segment's ambient FG, so it composes with both threshold_target
+	// modes. Empty (the default) leaves the bar in the ambient colour.
+	BarFG         string      `json:"bar_fg,omitempty"`
+	BarThresholds []Threshold `json:"bar_thresholds,omitempty"`
+
+	// LabelFG overrides the foreground of the label prefix only (e.g. a
+	// limit segment's "5h:" / "7d:"), independent of the bar and the
+	// number; LabelThresholds is the reactive variant. Enables e.g. a
+	// grey label beside a colour-reactive bar. Empty leaves the label in
+	// the ambient colour.
+	LabelFG         string      `json:"label_fg,omitempty"`
+	LabelThresholds []Threshold `json:"label_thresholds,omitempty"`
+
 	// Align, when "right", anchors this segment (and every following
 	// segment in the same row) to the right edge of the usable width.
 	// The slack between the preceding left-group and the first
@@ -1314,22 +1333,26 @@ func truncateToWidth(s string, max int) string {
 //     threshold matching: returns Segment.FG verbatim.
 //   - Multiple matching thresholds: the one with the highest Min wins.
 //   - A threshold with FG=="" is skipped, as if absent.
-func chooseFG(s Segment, p *payload) string {
-	if len(s.Thresholds) == 0 {
-		return s.FG
+//
+// pickThresholdFG returns the FG of the highest matching threshold
+// (Min <= pct, highest Min wins), skipping entries with an empty FG.
+// When the list is empty, the segment has no percentage metric, or no
+// threshold matches, it returns fallback. It is the shared core behind
+// chooseFG (segment / number colour) and the per-part bar and label
+// colours (BarThresholds / LabelThresholds).
+func pickThresholdFG(fallback string, thresholds []Threshold, typ string, p *payload) string {
+	if len(thresholds) == 0 {
+		return fallback
 	}
-	pct, ok := segmentMetric(s.Type, p)
+	pct, ok := segmentMetric(typ, p)
 	if !ok {
-		return s.FG
+		return fallback
 	}
-	chosen := s.FG
+	chosen := fallback
 	var chosenMin float64
 	matched := false
-	for _, t := range s.Thresholds {
-		if t.FG == "" {
-			continue
-		}
-		if pct < t.Min {
+	for _, t := range thresholds {
+		if t.FG == "" || pct < t.Min {
 			continue
 		}
 		if !matched || t.Min > chosenMin {
@@ -1339,6 +1362,24 @@ func chooseFG(s Segment, p *payload) string {
 		}
 	}
 	return chosen
+}
+
+// chooseFG resolves the segment's (and, under threshold_target "pct", its
+// percentage's) foreground from Thresholds, falling back to the static FG.
+func chooseFG(s Segment, p *payload) string {
+	return pickThresholdFG(s.FG, s.Thresholds, s.Type, p)
+}
+
+// ambientFG is the foreground the outer style() wrap applies to the
+// segment body: the static FG under threshold_target "pct" (the number is
+// coloured internally by wrapPct), otherwise the threshold-resolved FG.
+// Per-part wraps (bar, label) close back to this so untouched regions keep
+// the ambient colour in both threshold_target modes.
+func ambientFG(s Segment, p *payload) string {
+	if s.ThresholdTarget == "pct" {
+		return s.FG
+	}
+	return chooseFG(s, p)
 }
 
 // segmentMetric returns the percentage value (0-100) that drives a
