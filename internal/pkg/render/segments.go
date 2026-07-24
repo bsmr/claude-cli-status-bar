@@ -169,6 +169,9 @@ func effectiveBarCells(s Segment) int {
 // UsedPercentage and ContextWindowSize are zero (no data). When
 // Segment.ThresholdTarget=="pct" the percent digits are wrapped in the
 // threshold FG via wrapPct so the bar and tokens stay in the static FG.
+// Segment.TokenPosition places the token fraction in the "bar+pct" style:
+// "after" (default) trails the percent, "before" leads the bar, "hidden"
+// omits it.
 func renderContext(p *payload, s Segment, env renderEnv) string {
 	if p.Context.UsedPercentage == 0 && p.Context.ContextWindowSize == 0 {
 		return ""
@@ -192,8 +195,15 @@ func renderContext(p *payload, s Segment, env renderEnv) string {
 		// current_usage.input_tokens is just the current turn's prompt size
 		// after caching (often 1) and would render misleadingly as "0".
 		used := p.Context.TotalInputTokens
-		return fmt.Sprintf("%s %s %s/%s",
-			bar, pctStyled, formatTokens(used), formatTokens(p.Context.ContextWindowSize))
+		tokens := formatTokens(used) + "/" + formatTokens(p.Context.ContextWindowSize)
+		switch s.TokenPosition {
+		case "hidden":
+			return fmt.Sprintf("%s %s", bar, pctStyled)
+		case "before":
+			return fmt.Sprintf("%s %s %s", tokens, bar, pctStyled)
+		default: // "after", "" or unknown
+			return fmt.Sprintf("%s %s %s", bar, pctStyled, tokens)
+		}
 	}
 }
 
