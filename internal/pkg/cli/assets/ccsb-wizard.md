@@ -42,10 +42,10 @@ Accept vague or natural-language input. Interpret it as follows:
 |---|---|
 | "too colorful" | Simplify the background palette; fewer distinct colors |
 | "I want the git branch" | Add a `git_branch` segment |
-| "my boss finds it cluttered" | Remove `session_id`, `duration`, `lines_changed` |
+| "my boss finds it cluttered" | Remove `session_name`, `duration`, `lines` |
 | "I can't read the grey tones" | Increase contrast; use lighter/darker 256-color values |
 | "rainbow colors" | Assign rotating accent backgrounds across segments/rows |
-| "show context usage" | Add a `context_window` segment |
+| "show context usage" | Add a `context` segment |
 | "simpler" | Reduce to one row, model + cost only |
 
 Ask follow-up questions one at a time until the desired change is fully clear.
@@ -58,16 +58,22 @@ Available segment types:
 | Type | What it shows | Example |
 |---|---|---|
 | `model` | Current Claude model | `claude-sonnet-4-6` |
+| `context` | Context-window usage (bar + percent) | `●●●○○○○○ 42%` |
 | `cost` | Cumulative session cost | `$0.12` |
-| `context_window` | Context usage as percentage | `42%` |
-| `git_branch` | Current git branch | `main` |
-| `workspace` | Working directory (abbreviated) | `~/repos/myproject` |
-| `session_id` | Session ID (first 8 chars) | `a1b2c3d4` |
-| `thinking` | Extended thinking active | `⚙` |
-| `effort` | Reasoning effort level | `high` |
 | `duration` | Elapsed session time | `12m` |
-| `lines_changed` | Lines added/removed | `+34 -12` |
-| `version` | ccsb binary version | `v0.3.0` |
+| `lines` | Lines added / removed this session | `+34 −12` |
+| `cwd` | Working directory (basename) | `myproject` |
+| `git_branch` | Current git branch | `main` |
+| `git_dirty` | Uncommitted-change count (opt-in) | `*3` |
+| `limit_5h` | 5-hour rate-limit usage | `5h: 18%` |
+| `limit_7d` | 7-day rate-limit usage | `7d: 40%` |
+| `mode` | Thinking (🧠) or fast-mode (⚡) indicator | `🧠` |
+| `effort` | Reasoning effort level | `high` |
+| `session_name` | Session name | `my-session` |
+| `output_style` | Output style name | `style: concise` |
+| `tty_size` | Terminal size (cols × rows) | `128×37` |
+| `schema_health` | Payload-schema warning (hidden unless broken) | `☠` |
+| `version` | ccsb binary version | `v0.4.0` |
 | `text` | Static label | any string |
 
 Each segment accepts:
