@@ -314,6 +314,10 @@ Per-segment additional fields are documented under each type below.
 | `bar_width`     | `context`, `limit_5h`, `limit_7d`    | Circle-bar length in cells. Default `16`; zero or negative falls back to the default. See [`bar_width`](#bar_width). |
 | `thresholds`    | `context`, `limit_5h`, `limit_7d`    | Per-segment percentage-driven `fg` overrides. See [Thresholds](#thresholds). |
 | `threshold_target` | `context`, `limit_5h`, `limit_7d` | `"all"` (default) wraps the whole segment in the threshold `fg`; `"pct"` wraps only the percentage digits. See [Thresholds](#thresholds). |
+| `bar_fg`        | `context`, `limit_5h`, `limit_7d`    | Foreground for the **bar glyphs only**, independent of the segment/number colour. `bar_thresholds` (reactive) overrides it. Lets a dimmed bar sit beside a bright, threshold-reactive number. |
+| `bar_thresholds` | `context`, `limit_5h`, `limit_7d`   | Percentage-keyed palette for the bar (same shape as `thresholds`; highest matching `min` wins), overriding `bar_fg`. |
+| `label_fg`      | `limit_5h`, `limit_7d`               | Foreground for the **label prefix only** (`5h:` / `7d:`), independent of the bar and number. `label_thresholds` is the reactive variant. |
+| `label_thresholds` | `limit_5h`, `limit_7d`            | Percentage-keyed palette for the label prefix (same shape as `thresholds`). |
 | `scope`         | `git_branch`                         | `"local"` (default) reports the nearest repository; `"toplevel"` reports the outermost superproject when `cwd` is inside a submodule. See [`git_branch`](#git_branch). |
 
 ### Thresholds

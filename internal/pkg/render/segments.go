@@ -180,7 +180,9 @@ func renderContext(p *payload, s Segment, env renderEnv) string {
 	pct := int(p.Context.UsedPercentage + 0.5) // round
 	pctText := fmt.Sprintf("%d%%", pct)
 	pctStyled := wrapPct(pctText, s, p, env.colorEnabled)
-	bar := makeBar(p.Context.UsedPercentage, effectiveBarCells(s))
+	amb := ambientFG(s, p)
+	bar := wrapPart(makeBar(p.Context.UsedPercentage, effectiveBarCells(s)),
+		pickThresholdFG(s.BarFG, s.BarThresholds, s.Type, p), amb, env.colorEnabled)
 	switch style {
 	case "bar":
 		return bar
@@ -276,20 +278,23 @@ func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLab
 	}
 	pct := wrapPct(formatPct(rl.UsedPercentage), s, p, env.colorEnabled)
 	cells := effectiveBarCells(s)
+	amb := ambientFG(s, p)
+	labeled := wrapPart(label+":", pickThresholdFG(s.LabelFG, s.LabelThresholds, s.Type, p), amb, env.colorEnabled)
+	bar := wrapPart(makeBar(rl.UsedPercentage, cells), pickThresholdFG(s.BarFG, s.BarThresholds, s.Type, p), amb, env.colorEnabled)
 
 	switch s.Style {
 	case "bar":
-		return fmt.Sprintf("%s: %s", label, makeBar(rl.UsedPercentage, cells))
+		return labeled + " " + bar
 	case "bar+pct":
 		if rl.ResetsAt == 0 {
-			return fmt.Sprintf("%s: %s %s", label, makeBar(rl.UsedPercentage, cells), pct)
+			return labeled + " " + bar + " " + pct
 		}
-		return fmt.Sprintf("%s: %s %s · %s", label, makeBar(rl.UsedPercentage, cells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return labeled + " " + bar + " " + pct + " · " + formatCountdown(rl.ResetsAt-env.nowUnix)
 	default: // "" or "pct"
 		if rl.ResetsAt == 0 {
-			return fmt.Sprintf("%s: %s", label, pct)
+			return labeled + " " + pct
 		}
-		return fmt.Sprintf("%s: %s · %s", label, pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return labeled + " " + pct + " · " + formatCountdown(rl.ResetsAt-env.nowUnix)
 	}
 }
 

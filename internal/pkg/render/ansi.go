@@ -48,6 +48,27 @@ func style(s, fg, bg string, bold, colorEnabled bool) string {
 	return b.String()
 }
 
+// wrapPart colours a sub-region of a segment (its bar glyphs or its
+// label) in innerFG and closes back to ambientFG so the surrounding text
+// keeps its colour. It mirrors wrapPct's restore trick: close with
+// fg256(ambientFG) when that is a valid colour, else the terminal-default
+// "\x1b[39m". Returns s verbatim when colour is disabled, innerFG is
+// empty or invalid, or innerFG equals ambientFG (no visible change).
+func wrapPart(s, innerFG, ambientFG string, colorEnabled bool) string {
+	if !colorEnabled || innerFG == "" || innerFG == ambientFG {
+		return s
+	}
+	open := fg256(innerFG)
+	if open == "" {
+		return s
+	}
+	closeSeq := "\x1b[39m"
+	if reopen := fg256(ambientFG); reopen != "" {
+		closeSeq = reopen
+	}
+	return open + s + closeSeq
+}
+
 func validColor(n string) bool {
 	if n == "" || len(n) > 3 {
 		return false

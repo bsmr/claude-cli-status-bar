@@ -181,6 +181,100 @@ func TestRenderContext_HiddenWhenNoData(t *testing.T) {
 	}
 }
 
+func TestWrapPart(t *testing.T) {
+	if got := wrapPart("x", "1", "2", false); got != "x" {
+		t.Errorf("colour off: %q", got)
+	}
+	if got := wrapPart("x", "", "2", true); got != "x" {
+		t.Errorf("empty innerFG: %q", got)
+	}
+	if got := wrapPart("x", "5", "5", true); got != "x" {
+		t.Errorf("innerFG==ambient: %q", got)
+	}
+	if got := wrapPart("x", "999", "2", true); got != "x" {
+		t.Errorf("invalid innerFG: %q", got)
+	}
+	if got := wrapPart("x", "1", "2", true); got != fg256("1")+"x"+fg256("2") {
+		t.Errorf("wrap+restore: %q", got)
+	}
+	if got := wrapPart("x", "1", "", true); got != fg256("1")+"x"+"\x1b[39m" {
+		t.Errorf("default close: %q", got)
+	}
+}
+
+func TestRenderContext_NoPartColorsUnchanged(t *testing.T) {
+	p := &payload{}
+	p.Context.UsedPercentage = 50
+	p.Context.ContextWindowSize = 200_000
+	p.Context.TotalInputTokens = 100_000
+	// colour on, but no bar_fg/threshold_target -> plain body, no escapes.
+	got := renderContext(p, Segment{Style: "bar+pct"}, renderEnv{colorEnabled: true})
+	if got != "●●●●●●●●○○○○○○○○ 50% 100k/200k" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRenderContext_BarFGColorsBarOnly(t *testing.T) {
+	p := &payload{}
+	p.Context.UsedPercentage = 50
+	got := renderContext(p, Segment{Style: "bar", BarFG: "245"}, renderEnv{colorEnabled: true})
+	want := fg256("245") + "●●●●●●●●○○○○○○○○" + "\x1b[39m"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestRenderContext_BarThresholdsReactive(t *testing.T) {
+	p := &payload{}
+	p.Context.UsedPercentage = 95
+	s := Segment{Type: "context", Style: "bar", BarWidth: 4, BarThresholds: []Threshold{{Min: 0, FG: "2"}, {Min: 90, FG: "1"}}}
+	got := renderContext(p, s, renderEnv{colorEnabled: true})
+	want := fg256("1") + "●●●◕" + "\x1b[39m" // 95% -> highest min 90 -> "1"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestRenderContext_DimBarBrightNumberCompose(t *testing.T) {
+	p := &payload{}
+	p.Context.UsedPercentage = 95
+	p.Context.ContextWindowSize = 200_000
+	p.Context.TotalInputTokens = 100_000
+	s := Segment{
+		Type: "context", Style: "bar+pct", BarWidth: 4, FG: "245", ThresholdTarget: "pct",
+		Thresholds: []Threshold{{Min: 90, FG: "1"}}, BarFG: "240",
+	}
+	got := renderContext(p, s, renderEnv{colorEnabled: true})
+	// bar dim 240 -> back to ambient 245; number 95% bright 1 -> back to 245.
+	want := fg256("240") + "●●●◕" + fg256("245") + " " +
+		fg256("1") + "95%" + fg256("245") + " 100k/200k"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestRenderLimit_LabelFGColorsLabelOnly(t *testing.T) {
+	p := &payload{}
+	p.Limits.FiveHour.UsedPercentage = 50
+	p.Limits.FiveHour.ResetsAt = 100
+	env := renderEnv{nowUnix: 40, colorEnabled: true} // 60s -> 1m
+	got := renderLimit5h(p, Segment{LabelFG: "245"}, env)
+	want := fg256("245") + "5h:" + "\x1b[39m" + " 50% · 1m"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestRenderLimit_BarFGColorsBarOnly(t *testing.T) {
+	p := &payload{}
+	p.Limits.FiveHour.UsedPercentage = 50
+	got := renderLimit5h(p, Segment{Style: "bar+pct", BarWidth: 4, BarFG: "245"}, renderEnv{colorEnabled: true})
+	want := "5h: " + fg256("245") + "●●○○" + "\x1b[39m" + " 50%"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
 func TestMakeBar_CircleSequence(t *testing.T) {
 	// 4-cell bar: 16 quarter-steps total; each quarter-step = 6.25 pp.
 	// 1 full cell = 4 quarters = 25 pp.
