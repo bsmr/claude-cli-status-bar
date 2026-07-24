@@ -313,6 +313,8 @@ Per-segment additional fields are documented under each type below.
 | `style`         | `context`, `limit_5h`, `limit_7d`    | Selects between presentation variants.               |
 | `token_position` | `context`                           | In the `bar+pct` style, places the `used/total` token fraction: `"after"` (default) trails the percentage, `"before"` leads the bar, `"hidden"` omits it. Empty or unknown falls back to `"after"`. |
 | `bar_width`     | `context`, `limit_5h`, `limit_7d`    | Circle-bar length in cells. Default `16`; zero or negative falls back to the default. See [`bar_width`](#bar_width). |
+| `bar_glyphs`    | `context`, `limit_5h`, `limit_7d`    | Overrides the fill ramp: an ordered list from empty (first) to full (last); each cell renders one of `len − 1` sub-steps. At least two entries; fewer falls back to the built-in ramp. Overrides `bar_style`. |
+| `bar_style`     | `context`, `limit_5h`, `limit_7d`    | Built-in fill ramp: `"circles"` (default, `○◔◑◕●`) or `"blocks"` (`░▏▎▍▌▋▊▉█`). Unknown falls back to `"circles"`. Ignored when `bar_glyphs` is set. |
 | `thresholds`    | `context`, `limit_5h`, `limit_7d`    | Per-segment percentage-driven `fg` overrides. See [Thresholds](#thresholds). |
 | `threshold_target` | `context`, `limit_5h`, `limit_7d` | `"all"` (default) wraps the whole segment in the threshold `fg`; `"pct"` wraps only the percentage digits. See [Thresholds](#thresholds). |
 | `scope`         | `git_branch`                         | `"local"` (default) reports the nearest repository; `"toplevel"` reports the outermost superproject when `cwd` is inside a submodule. See [`git_branch`](#git_branch). |
