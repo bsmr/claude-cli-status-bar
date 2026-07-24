@@ -434,7 +434,19 @@ func renderGitDirty(_ *payload, s Segment, env renderEnv) string {
 
 	cached, found := readDirtyCache(DirtyCachePath(env.stateDir, gitDir))
 	if !found || env.nowUnix-cached.Unix >= int64(dirtyCacheTTL.Seconds()) {
-		spawnDirtyRefresh(env.cwd)
+		// Single-flight: only the caller that wins the lock spawns a
+		// refresher. This function is invoked several times per render (the
+		// layout engine's measurement passes) and by every parallel session
+		// on the repo — without the guard each of those would fork its own
+		// `git status`. The lock coordinates across processes via O_EXCL.
+		if acquireRefreshLock(env.stateDir, gitDir) {
+			if !spawnDirtyRefresh(env.cwd) {
+				// The child never started, so nothing will release the marker;
+				// drop it now so the next render retries instead of waiting
+				// out the lock TTL.
+				releaseRefreshLock(env.stateDir, gitDir)
+			}
+		}
 	}
 	if !found || cached.Count <= 0 {
 		return ""

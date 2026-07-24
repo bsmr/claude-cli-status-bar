@@ -622,18 +622,27 @@ prints it immediately, and when that number is older than 3 seconds it
 starts a detached `ccsb refresh-git-dirty <dir>` that updates the cache for
 the *next* status update. Consequences worth knowing:
 
-- The render path stays free of subprocesses; a huge or slow repository
-  can never delay the status line.
+- The render path never runs `git` and never blocks: it pays only a cache
+  read plus, at most, the fork of a tiny detached helper. A huge or slow
+  repository can therefore never delay the status line — `git` runs only in
+  the background refresher, never in a render.
 - The number can lag by one status update, and the segment stays hidden
   until the first refresh has completed.
 - The cache lives at `$XDG_STATE_HOME/ccsb/git-dirty/<hash>.json`, one
   entry per repository. Deleting it is harmless — the next render
   repopulates it.
+- A single-flight marker (`<hash>.json.pending`) beside the cache keeps
+  refreshes to one per repository at a time — however many render passes,
+  consecutive updates, or parallel Claude sessions hit the same repo. A
+  marker orphaned by a crashed refresher is reclaimed after a short timeout;
+  that reclaim is best-effort, so a crash can briefly allow a second
+  refresher — never a wrong count.
 - `git` must be on `PATH` for the refresher. Without it the segment simply
   stays hidden.
 
-This is the only segment that runs a subprocess, and it only does so when
-a config asks for it — it is absent from the default layout.
+This is the one segment that starts a subprocess — a detached helper, never
+`git` in the render path itself — and only when a config asks for it: it is
+absent from the default layout.
 
 #### `tty_size`
 
