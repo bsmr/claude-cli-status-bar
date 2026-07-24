@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -41,6 +42,19 @@ func init() {
 	segmentFuncs["tty_size"] = renderTTYSize
 	segmentFuncs["version"] = renderVersion
 	segmentFuncs["schema_health"] = renderSchemaHealth
+}
+
+// SegmentTypes returns the sorted names of every registered segment type.
+// Exported so consumers that carry their own segment vocabulary — notably the
+// ccsb-wizard skill asset — can be tested against what the renderer actually
+// implements, instead of drifting into names that do not exist.
+func SegmentTypes() []string {
+	out := make([]string, 0, len(segmentFuncs))
+	for name := range segmentFuncs {
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // renderText returns the segment's Label verbatim. Useful as a literal

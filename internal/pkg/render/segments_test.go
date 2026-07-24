@@ -729,3 +729,18 @@ func TestRenderSchemaHealth_GlyphWhenIssue(t *testing.T) {
 		t.Errorf("got %q, want ☠", got)
 	}
 }
+
+func TestSegmentTypes_SortedAndMatchesRegistry(t *testing.T) {
+	types := SegmentTypes()
+	if len(types) != len(segmentFuncs) {
+		t.Fatalf("SegmentTypes returned %d names, registry has %d", len(types), len(segmentFuncs))
+	}
+	for i, name := range types {
+		if _, ok := segmentFuncs[name]; !ok {
+			t.Errorf("SegmentTypes returned %q, which is not in the registry", name)
+		}
+		if i > 0 && types[i-1] >= name {
+			t.Errorf("SegmentTypes not strictly sorted: %q before %q", types[i-1], name)
+		}
+	}
+}
