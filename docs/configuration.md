@@ -490,17 +490,19 @@ zero.
 
 #### `context`
 
-Context-window state from `payload.context_window`. Sixteen-cell unicode
-block-element bar (`█` for filled cells, `░` for empty). The percent is
-rounded to the nearest integer; the "consumed" number is
-`total_input_tokens` (cumulative session input, not the current turn's
-prompt size after caching).
+Context-window state from `payload.context_window`. Sixteen-cell circle
+bar — each cell has five quarter-fill states (`○◔◑◕●`, empty to full), so
+the ramp is `bar_width × 4` steps. The fill glyphs are configurable via
+[`bar_glyphs` / `bar_style`](#type-specific-fields) (e.g. `"blocks"` for a
+`░▏▎▍▌▋▊▉█` ramp). The percent is rounded to the nearest integer; the
+"consumed" number is `total_input_tokens` (cumulative session input, not
+the current turn's prompt size after caching).
 
-| `style`     | Output                                  |
-| ----------- | --------------------------------------- |
-| `"bar+pct"` | `[████░░░░░░░░░░░░] 26% 264k/1M` (default) |
-| `"bar"`     | `[████░░░░░░░░░░░░]`                    |
-| `"pct"`     | `26%`                                   |
+| `style`     | Output                              |
+| ----------- | ----------------------------------- |
+| `"bar+pct"` | `●●●●●●●●○○○○○○○○ 50% 100k/200k` (default) |
+| `"bar"`     | `●●●●●●●●○○○○○○○○`                    |
+| `"pct"`     | `50%`                               |
 
 Token counts are compacted: `1234` → `"1k"`, `1_500_000` → `"1.5M"`. Hidden
 when both `used_percentage` and `context_window_size` are zero. The bar
