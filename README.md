@@ -10,8 +10,10 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** feature-complete as of `0.2.37`; further `0.2.x` releases
-> are bugfix-only. The native renderer is the
+> **Status:** `0.4.0` — stable and actively developed (`0.3.0` added the
+> `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
+> per-part bar/label colour, token-fraction placement, and an opt-in
+> `git_dirty` segment). The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
