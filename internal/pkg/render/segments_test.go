@@ -203,6 +203,72 @@ func TestMakeBar_CircleSequence(t *testing.T) {
 	}
 }
 
+// joinRamp compares glyph ramps without pulling in reflect/strings.
+func joinRamp(s []string) string {
+	out := ""
+	for _, x := range s {
+		out += x + "|"
+	}
+	return out
+}
+
+func TestMakeBarGlyphs_Blocks(t *testing.T) {
+	for _, tc := range []struct {
+		pct  float64
+		want string
+	}{
+		{0, "░░░░"},
+		{50, "██░░"},
+		{100, "████"},
+		// 4 cells × 8 sub-steps = 32 levels; 12.5% → 4 → 0 full cells,
+		// remainder 4 → blockSteps[4] = "▌" in the first cell.
+		{12.5, "▌░░░"},
+	} {
+		if got := makeBarGlyphs(tc.pct, 4, blockSteps); got != tc.want {
+			t.Errorf("blocks %.4f%%: got %q, want %q", tc.pct, got, tc.want)
+		}
+	}
+}
+
+func TestMakeBarGlyphs_CustomTwoStep(t *testing.T) {
+	if got := makeBarGlyphs(50, 4, []string{".", "#"}); got != "##.." {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMakeBarGlyphs_ShortRampFallsBackToCircles(t *testing.T) {
+	if got := makeBarGlyphs(50, 4, []string{"x"}); got != makeBar(50, 4) {
+		t.Errorf("short ramp should fall back to circles, got %q", got)
+	}
+}
+
+func TestBarRamp_Resolution(t *testing.T) {
+	if joinRamp(barRamp(Segment{})) != joinRamp(circleSteps) {
+		t.Error("default should be circles")
+	}
+	if joinRamp(barRamp(Segment{BarStyle: "blocks"})) != joinRamp(blockSteps) {
+		t.Error("blocks preset")
+	}
+	if joinRamp(barRamp(Segment{BarStyle: "nonsense"})) != joinRamp(circleSteps) {
+		t.Error("unknown style falls back to circles")
+	}
+	custom := []string{".", "#"}
+	if joinRamp(barRamp(Segment{BarGlyphs: custom})) != joinRamp(custom) {
+		t.Error("bar_glyphs overrides")
+	}
+	if joinRamp(barRamp(Segment{BarGlyphs: []string{"x"}, BarStyle: "blocks"})) != joinRamp(blockSteps) {
+		t.Error("too-short bar_glyphs falls back to bar_style")
+	}
+}
+
+func TestRenderContext_BarStyleBlocks(t *testing.T) {
+	p := &payload{}
+	p.Context.UsedPercentage = 50
+	if got := renderContext(p, Segment{Style: "bar", BarStyle: "blocks"}, renderEnv{}); got != "████████░░░░░░░░" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestRenderLimit5h_PercentAndCountdown(t *testing.T) {
 	p := &payload{}
 	p.Limits.FiveHour.UsedPercentage = 7.0

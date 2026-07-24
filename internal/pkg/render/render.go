@@ -198,6 +198,18 @@ type Segment struct {
 	// limit_7d while context keeps the wider default.
 	BarWidth int `json:"bar_width,omitempty"` // type=context|limit_5h|limit_7d
 
+	// BarGlyphs overrides the bar fill ramp for segments that draw a bar
+	// (context, limit_5h, limit_7d). It is an ordered ramp from empty
+	// (index 0) to full (last index); each cell renders one of len-1
+	// sub-steps. Must have at least two entries; fewer falls back to the
+	// built-in ramp. When set it overrides BarStyle.
+	BarGlyphs []string `json:"bar_glyphs,omitempty"` // type=context|limit_5h|limit_7d
+
+	// BarStyle selects a built-in fill ramp: "circles" (default, ○◔◑◕●)
+	// or "blocks" (░▏▎▍▌▋▊▉█). Unknown values fall back to "circles".
+	// Ignored when BarGlyphs is set.
+	BarStyle string `json:"bar_style,omitempty"` // type=context|limit_5h|limit_7d
+
 	// Thresholds let percentage-bearing segments (context, limit_5h,
 	// limit_7d) override FG based on the current used-percentage. The
 	// highest matching Min wins; thresholds with empty FG are skipped;

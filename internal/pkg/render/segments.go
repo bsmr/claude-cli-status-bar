@@ -180,7 +180,7 @@ func renderContext(p *payload, s Segment, env renderEnv) string {
 	pct := int(p.Context.UsedPercentage + 0.5) // round
 	pctText := fmt.Sprintf("%d%%", pct)
 	pctStyled := wrapPct(pctText, s, p, env.colorEnabled)
-	bar := makeBar(p.Context.UsedPercentage, effectiveBarCells(s))
+	bar := makeBarGlyphs(p.Context.UsedPercentage, effectiveBarCells(s), barRamp(s))
 	switch style {
 	case "bar":
 		return bar
@@ -198,7 +198,7 @@ func renderContext(p *payload, s Segment, env renderEnv) string {
 }
 
 // circleSteps maps quarter-fill level (0–4) to a Unicode circle glyph.
-var circleSteps = [5]string{
+var circleSteps = []string{
 	"○", // ○ U+25CB WHITE CIRCLE            (0/4)
 	"◔", // ◔ U+25D4 UPPER-RIGHT QUADRANT    (1/4)
 	"◑", // ◑ U+25D1 RIGHT HALF BLACK         (2/4)
@@ -206,27 +206,56 @@ var circleSteps = [5]string{
 	"●", // ● U+25CF BLACK CIRCLE             (4/4)
 }
 
-// makeBar renders a circle-based bar of length cells, filled proportionally
-// to pct (0–100, clamped). Each cell has 5 states (0, ¼, ½, ¾, full),
-// yielding cells×4 discrete steps.
-func makeBar(pct float64, cells int) string {
-	total := cells * 4
-	quarters := int(pct*float64(total)/100 + 0.5)
-	quarters = min(max(quarters, 0), total)
-	fullCells := quarters / 4
-	remainder := quarters % 4
+// blockSteps is the "blocks" preset ramp: a light-shade empty, seven
+// left-anchored eighth blocks, and a full block.
+var blockSteps = []string{"░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"}
+
+// barRamp resolves the fill ramp for a bar-drawing segment. An explicit
+// BarGlyphs (>= 2 entries) wins; otherwise BarStyle selects a preset
+// ("blocks" -> blockSteps), defaulting to circleSteps for "circles", "",
+// or any unknown value.
+func barRamp(s Segment) []string {
+	if len(s.BarGlyphs) >= 2 {
+		return s.BarGlyphs
+	}
+	if s.BarStyle == "blocks" {
+		return blockSteps
+	}
+	return circleSteps
+}
+
+// makeBarGlyphs renders a bar of length cells using ramp, an ordered fill
+// sequence from empty (index 0) to full (last index). Each cell resolves to
+// one of len(ramp)-1 sub-steps, yielding cells×(len-1) discrete levels. A
+// ramp shorter than two entries falls back to circleSteps so a malformed
+// config cannot panic or blank the bar.
+func makeBarGlyphs(pct float64, cells int, ramp []string) string {
+	if len(ramp) < 2 {
+		ramp = circleSteps
+	}
+	sub := len(ramp) - 1
+	total := cells * sub
+	filled := int(pct*float64(total)/100 + 0.5)
+	filled = min(max(filled, 0), total)
+	fullCells := filled / sub
+	remainder := filled % sub
 	var b strings.Builder
 	for i := range cells {
 		switch {
 		case i < fullCells:
-			b.WriteString(circleSteps[4])
+			b.WriteString(ramp[sub])
 		case i == fullCells && remainder > 0:
-			b.WriteString(circleSteps[remainder])
+			b.WriteString(ramp[remainder])
 		default:
-			b.WriteString(circleSteps[0])
+			b.WriteString(ramp[0])
 		}
 	}
 	return b.String()
+}
+
+// makeBar renders the default circle bar: makeBarGlyphs with circleSteps.
+func makeBar(pct float64, cells int) string {
+	return makeBarGlyphs(pct, cells, circleSteps)
 }
 
 // formatTokens compacts large numbers: 1234 → "1k", 273000 → "273k",
@@ -276,15 +305,16 @@ func renderLimit(rl rateLimitF, p *payload, s Segment, env renderEnv, defaultLab
 	}
 	pct := wrapPct(formatPct(rl.UsedPercentage), s, p, env.colorEnabled)
 	cells := effectiveBarCells(s)
+	ramp := barRamp(s)
 
 	switch s.Style {
 	case "bar":
-		return fmt.Sprintf("%s: %s", label, makeBar(rl.UsedPercentage, cells))
+		return fmt.Sprintf("%s: %s", label, makeBarGlyphs(rl.UsedPercentage, cells, ramp))
 	case "bar+pct":
 		if rl.ResetsAt == 0 {
-			return fmt.Sprintf("%s: %s %s", label, makeBar(rl.UsedPercentage, cells), pct)
+			return fmt.Sprintf("%s: %s %s", label, makeBarGlyphs(rl.UsedPercentage, cells, ramp), pct)
 		}
-		return fmt.Sprintf("%s: %s %s · %s", label, makeBar(rl.UsedPercentage, cells), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
+		return fmt.Sprintf("%s: %s %s · %s", label, makeBarGlyphs(rl.UsedPercentage, cells, ramp), pct, formatCountdown(rl.ResetsAt-env.nowUnix))
 	default: // "" or "pct"
 		if rl.ResetsAt == 0 {
 			return fmt.Sprintf("%s: %s", label, pct)
