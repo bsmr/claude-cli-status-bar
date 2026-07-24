@@ -401,6 +401,17 @@ func TestRenderContext_BarStyleBlocks(t *testing.T) {
 	}
 }
 
+// TestRenderLimit_BarStyleBlocks mirrors TestRenderContext_BarStyleBlocks
+// for the limit path, which also switched to the configurable ramp — a
+// regression that dropped the ramp on renderLimit would go uncaught otherwise.
+func TestRenderLimit_BarStyleBlocks(t *testing.T) {
+	p := &payload{}
+	p.Limits.FiveHour.UsedPercentage = 50
+	if got := renderLimit5h(p, Segment{Style: "bar", BarStyle: "blocks"}, renderEnv{}); got != "5h: ████████░░░░░░░░" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestRenderLimit5h_PercentAndCountdown(t *testing.T) {
 	p := &payload{}
 	p.Limits.FiveHour.UsedPercentage = 7.0

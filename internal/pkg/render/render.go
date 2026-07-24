@@ -1326,14 +1326,6 @@ func truncateToWidth(s string, max int) string {
 	return runewidth.Truncate(s, max, "…")
 }
 
-// chooseFG picks the foreground color for a segment, honouring
-// Segment.Thresholds. Behaviour:
-//
-//   - No thresholds, or segment without a percentage metric, or no
-//     threshold matching: returns Segment.FG verbatim.
-//   - Multiple matching thresholds: the one with the highest Min wins.
-//   - A threshold with FG=="" is skipped, as if absent.
-//
 // pickThresholdFG returns the FG of the highest matching threshold
 // (Min <= pct, highest Min wins), skipping entries with an empty FG.
 // When the list is empty, the segment has no percentage metric, or no
