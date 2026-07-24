@@ -181,6 +181,44 @@ func TestRenderContext_HiddenWhenNoData(t *testing.T) {
 	}
 }
 
+func contextPayload50() *payload {
+	p := &payload{}
+	p.Context.UsedPercentage = 50
+	p.Context.ContextWindowSize = 200_000
+	p.Context.TotalInputTokens = 100_000
+	return p
+}
+
+func TestRenderContext_TokenPositionBefore(t *testing.T) {
+	got := renderContext(contextPayload50(), Segment{Style: "bar+pct", TokenPosition: "before"}, renderEnv{})
+	if got != "100k/200k ●●●●●●●●○○○○○○○○ 50%" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRenderContext_TokenPositionHidden(t *testing.T) {
+	got := renderContext(contextPayload50(), Segment{Style: "bar+pct", TokenPosition: "hidden"}, renderEnv{})
+	if got != "●●●●●●●●○○○○○○○○ 50%" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRenderContext_TokenPositionAfterEqualsDefault(t *testing.T) {
+	p := contextPayload50()
+	after := renderContext(p, Segment{Style: "bar+pct", TokenPosition: "after"}, renderEnv{})
+	def := renderContext(p, Segment{Style: "bar+pct"}, renderEnv{})
+	if after != def || def != "●●●●●●●●○○○○○○○○ 50% 100k/200k" {
+		t.Errorf("after=%q def=%q", after, def)
+	}
+}
+
+func TestRenderContext_TokenPositionUnknownFallsBackToAfter(t *testing.T) {
+	got := renderContext(contextPayload50(), Segment{Style: "bar+pct", TokenPosition: "sideways"}, renderEnv{})
+	if got != "●●●●●●●●○○○○○○○○ 50% 100k/200k" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestMakeBar_CircleSequence(t *testing.T) {
 	// 4-cell bar: 16 quarter-steps total; each quarter-step = 6.25 pp.
 	// 1 full cell = 4 quarters = 25 pp.

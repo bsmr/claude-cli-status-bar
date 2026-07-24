@@ -191,6 +191,13 @@ type Segment struct {
 	Show1MFlag bool   `json:"show_1m_flag,omitempty"` // type=model
 	Style      string `json:"style,omitempty"`        // type=context|limit_5h|limit_7d
 
+	// TokenPosition controls where the used/total token fraction sits in a
+	// context segment rendered with the "bar+pct" style: "after" (default)
+	// trails the percentage, "before" leads the bar, "hidden" omits it.
+	// Empty or unknown values fall back to "after". Only the context
+	// segment emits a token fraction, so the field is ignored elsewhere.
+	TokenPosition string `json:"token_position,omitempty"` // type=context
+
 	// BarWidth overrides the circle-bar length (in cells) for segments
 	// that draw a bar: context, limit_5h, limit_7d. Each cell has five
 	// quarter-fill states. Zero or negative falls back to the package

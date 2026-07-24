@@ -311,6 +311,7 @@ Per-segment additional fields are documented under each type below.
 | `format`        | `cwd`, `cost`                        | Per-type format string or shape selector.            |
 | `show_1m_flag`  | `model`                              | Appends `" 1M"` when the payload's `exceeds_200k_tokens` is true. |
 | `style`         | `context`, `limit_5h`, `limit_7d`    | Selects between presentation variants.               |
+| `token_position` | `context`                           | In the `bar+pct` style, places the `used/total` token fraction: `"after"` (default) trails the percentage, `"before"` leads the bar, `"hidden"` omits it. Empty or unknown falls back to `"after"`. |
 | `bar_width`     | `context`, `limit_5h`, `limit_7d`    | Circle-bar length in cells. Default `16`; zero or negative falls back to the default. See [`bar_width`](#bar_width). |
 | `thresholds`    | `context`, `limit_5h`, `limit_7d`    | Per-segment percentage-driven `fg` overrides. See [Thresholds](#thresholds). |
 | `threshold_target` | `context`, `limit_5h`, `limit_7d` | `"all"` (default) wraps the whole segment in the threshold `fg`; `"pct"` wraps only the percentage digits. See [Thresholds](#thresholds). |
