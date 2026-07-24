@@ -1,10 +1,12 @@
 package fileutil
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -105,6 +107,68 @@ func TestWriteAtomic_NoTempLeftBehind(t *testing.T) {
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".tmp") {
 			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+// TestWriteAtomic_ConcurrentWritersLeaveValidFile exercises the atomicity
+// guarantee under contention — run with `go test -race`. Many goroutines write
+// distinct payloads to the SAME path at once (the git_dirty cache is written
+// this way by refreshers from multiple Claude sessions). Each payload is a
+// multi-KB run (> one page) of a single per-writer byte and a distinct length,
+// so a non-atomic in-place write would betray itself as a mixed (torn) or
+// short file. The temp+rename design must instead leave the final file
+// HOMOGENEOUS and equal to exactly one writer's COMPLETE payload, and leak no
+// .tmp files.
+func TestWriteAtomic_ConcurrentWritersLeaveValidFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.txt")
+
+	const writers = 40
+	payloads := make([][]byte, writers)
+	lenOf := make(map[byte]int, writers)
+	for i := range writers {
+		b := byte('A' + i)
+		p := bytes.Repeat([]byte{b}, 4096+i*97) // > page size, variable length
+		payloads[i] = p
+		lenOf[b] = len(p)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range writers {
+		wg.Go(func() {
+			<-start // maximise contention
+			if err := WriteAtomic(path, payloads[i]); err != nil {
+				t.Errorf("writer %d: %v", i, err)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("final file is empty")
+	}
+	// Homogeneous: every byte equals the first (no interleaving of two writers).
+	first := got[0]
+	for i, b := range got {
+		if b != first {
+			t.Fatalf("torn write: byte %d is %q but the file starts with %q", i, b, first)
+		}
+	}
+	// Complete: the length matches that writer's payload exactly (no short write).
+	if want := lenOf[first]; len(got) != want {
+		t.Errorf("short/long write: %d bytes of %q, want %d", len(got), first, want)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file left behind under contention: %s", e.Name())
 		}
 	}
 }

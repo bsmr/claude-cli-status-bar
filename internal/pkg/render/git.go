@@ -29,27 +29,38 @@ func branch(start string) string {
 //     submodule itself when start lies within one.
 //   - "toplevel": the outermost superproject of the submodule chain.
 func branchScoped(start, scope string) string {
-	if start == "" {
+	gitDir, ok := nearestGitDir(start)
+	if !ok {
 		return ""
+	}
+	if scope == "toplevel" {
+		if top := submoduleTopLevelGitDir(gitDir); top != "" {
+			return readHeadBranch(top)
+		}
+	}
+	return readHeadBranch(gitDir)
+}
+
+// nearestGitDir walks up from start until resolveGitDir finds a repository,
+// and reports the resolved git dir. ok is false for an empty start, a
+// filesystem root reached without a hit, or a walk longer than
+// maxWalkDepth.
+func nearestGitDir(start string) (string, bool) {
+	if start == "" {
+		return "", false
 	}
 	dir := filepath.Clean(start)
 	for range maxWalkDepth {
-		gitDir, ok := resolveGitDir(dir)
-		if ok {
-			if scope == "toplevel" {
-				if top := submoduleTopLevelGitDir(gitDir); top != "" {
-					return readHeadBranch(top)
-				}
-			}
-			return readHeadBranch(gitDir)
+		if gitDir, ok := resolveGitDir(dir); ok {
+			return gitDir, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return ""
+			return "", false
 		}
 		dir = parent
 	}
-	return ""
+	return "", false
 }
 
 // submoduleTopLevelGitDir returns the git dir of the outermost superproject

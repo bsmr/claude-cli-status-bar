@@ -31,9 +31,9 @@ for compatibility with existing setups (see [Background](#background)).
 
 - **Native renderer** — renders the status line directly from the JSON
   payload. Rows and segments (`model`, `context`, `cost`, `duration`,
-  `lines`, `cwd`, `git_branch`, `limit_5h`, `limit_7d`, `mode`, `effort`,
-  `session_name`, `output_style`, `tty_size`, `version`, `schema_health`,
-  `text`) are configurable. The default layout (used when no config file
+  `lines`, `cwd`, `git_branch`, `git_dirty`, `limit_5h`, `limit_7d`,
+  `mode`, `effort`, `session_name`, `output_style`, `tty_size`, `version`,
+  `schema_health`, `text`) are configurable. The default layout (used when no config file
   exists) is two-row Powerline with round end caps: row 1 carries model +
   mode glyph + context bar + 5h/7d rate-limit bars + a hidden-by-default
   schema-health indicator; row 2 carries git branch + lines diff + cwd

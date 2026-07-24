@@ -340,6 +340,10 @@ type Options struct {
 	// NoColor disables ANSI escape emission. Resolved by the caller from
 	// the NO_COLOR environment variable (no-color.org convention).
 	NoColor bool
+	// StateDir is ccsb's state directory ($XDG_STATE_HOME/ccsb). The
+	// git_dirty segment keeps its cache below it. Empty disables that
+	// segment — with nowhere to cache, there is nothing to show.
+	StateDir string
 }
 
 // payload mirrors the subset of the Claude Code statusLine payload that
@@ -1058,6 +1062,7 @@ func Render(opts Options, raw []byte) (string, error) {
 	}
 	env := renderEnv{
 		cwd:            cwd,
+		stateDir:       opts.StateDir,
 		colorEnabled:   !opts.NoColor,
 		nowUnix:        nowFunc().Unix(),
 		powerlineStyle: cfg.PowerlineStyle,
@@ -1225,6 +1230,7 @@ func renderRowRight(p *payload, row Row, env renderEnv, sep string) string {
 // Segment functions read these fields but never mutate them.
 type renderEnv struct {
 	cwd            string   // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
+	stateDir       string   // Options.StateDir; git_dirty's cache root, "" disables it
 	colorEnabled   bool     // false when NoColor was set on Options
 	nowUnix        int64    // wall clock at the start of Render, for time-based segments
 	ttyCols        int      // detected terminal columns, 0 when unknown

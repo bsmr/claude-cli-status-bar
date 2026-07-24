@@ -54,6 +54,17 @@ func SaveOutput(dir, sessionID string, data []byte, now time.Time, suffix string
 // Precedence: xdgStateHome, then home/.local/state. Returns "" if both are
 // empty so callers can detect the missing-environment case explicitly.
 func DefaultDir(home, xdgStateHome string) string {
+	base := StateBase(home, xdgStateHome)
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, "captures")
+}
+
+// StateBase resolves ccsb's state directory — the parent of the capture
+// directory, shared with any other on-disk state ccsb keeps. Same
+// precedence and same empty-means-unresolvable contract as DefaultDir.
+func StateBase(home, xdgStateHome string) string {
 	base := xdgStateHome
 	if base == "" {
 		if home == "" {
@@ -61,7 +72,7 @@ func DefaultDir(home, xdgStateHome string) string {
 		}
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "ccsb", "captures")
+	return filepath.Join(base, "ccsb")
 }
 
 // basename returns "<RFC3339Nano UTC>-<sanitized session id>" — the prefix
