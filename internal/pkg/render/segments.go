@@ -37,6 +37,7 @@ func init() {
 	segmentFuncs["limit_7d"] = renderLimit7d
 	segmentFuncs["mode"] = renderMode
 	segmentFuncs["git_branch"] = renderGitBranch
+	segmentFuncs["git_dirty"] = renderGitDirty
 	segmentFuncs["tty_size"] = renderTTYSize
 	segmentFuncs["version"] = renderVersion
 	segmentFuncs["schema_health"] = renderSchemaHealth
@@ -360,6 +361,49 @@ func renderGitBranch(_ *payload, s Segment, env renderEnv) string {
 		return b
 	}
 	return s.Label + ": " + b
+}
+
+// renderGitDirty returns the number of paths git reports as changed in the
+// repository containing env.cwd — modified, staged, deleted, renamed, and
+// untracked alike.
+//
+// The count is served from a cache and refreshed OUT OF BAND: this function
+// never runs git. When the cached value is older than dirtyCacheTTL (or
+// absent) it starts a detached `ccsb refresh-git-dirty` in the background
+// and renders whatever it has right now, so a slow repository can never
+// delay the status line — the fresher number simply appears one update
+// later.
+//
+// Segment.Format supports the {n} placeholder and defaults to "*{n}"; a
+// non-empty Segment.Label is prefixed as "<label>: <body>". Returns ""
+// for a clean tree, an unavailable count, or outside a repository, so the
+// segment (and its separator) drops out entirely.
+func renderGitDirty(_ *payload, s Segment, env renderEnv) string {
+	if env.stateDir == "" {
+		return ""
+	}
+	gitDir, ok := nearestGitDir(env.cwd)
+	if !ok {
+		return ""
+	}
+
+	cached, found := readDirtyCache(DirtyCachePath(env.stateDir, gitDir))
+	if !found || env.nowUnix-cached.Unix >= int64(dirtyCacheTTL.Seconds()) {
+		spawnDirtyRefresh(env.cwd)
+	}
+	if !found || cached.Count <= 0 {
+		return ""
+	}
+
+	format := s.Format
+	if format == "" {
+		format = "*{n}"
+	}
+	out := strings.ReplaceAll(format, "{n}", strconv.Itoa(cached.Count))
+	if s.Label != "" {
+		out = s.Label + ": " + out
+	}
+	return out
 }
 
 // renderTTYSize formats env.ttyCols × env.ttyRows. Returns "" when

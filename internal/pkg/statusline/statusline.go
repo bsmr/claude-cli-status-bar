@@ -44,6 +44,10 @@ type Options struct {
 	// Version is forwarded to the render package for the "version" segment
 	// type. Empty string suppresses the segment.
 	Version string
+	// StateDir is ccsb's state directory, forwarded to the render package
+	// as the cache root for the "git_dirty" segment. Empty suppresses that
+	// segment.
+	StateDir string
 }
 
 type payload struct {
@@ -144,10 +148,11 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 			cwd = p.Workspace.ProjectDir
 		}
 		rendered, rerr := render.Render(render.Options{
-			Config:  opts.Render,
-			Cwd:     cwd,
-			NoColor: opts.NoColor,
-			Version: opts.Version,
+			Config:   opts.Render,
+			Cwd:      cwd,
+			NoColor:  opts.NoColor,
+			Version:  opts.Version,
+			StateDir: opts.StateDir,
 		}, raw)
 		if rerr != nil {
 			runErr = fmt.Errorf("statusline: render: %w", rerr)

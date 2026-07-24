@@ -18,6 +18,7 @@ import (
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/capture"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/statusline"
 )
 
@@ -28,6 +29,7 @@ type Paths struct {
 	Settings        string // ~/.claude/settings.json
 	Config          string // $XDG_CONFIG_HOME/ccsb/config.json
 	Capture         string // $XDG_STATE_HOME/ccsb/captures
+	State           string // $XDG_STATE_HOME/ccsb
 	Self            string // absolute path of the running ccsb binary
 	ClaudeSkillsDir string // ~/.claude/skills/
 }
@@ -55,6 +57,7 @@ func ResolvePaths(e Env) Paths {
 		Settings:        claudesettings.DefaultPath(e.Home),
 		Config:          config.DefaultPath(e.Home, e.XDGConfigHome),
 		Capture:         capture.DefaultDir(e.Home, e.XDGStateHome),
+		State:           capture.StateBase(e.Home, e.XDGStateHome),
 		Self:            e.Self,
 		ClaudeSkillsDir: filepath.Join(e.Home, ".claude", "skills"),
 	}
@@ -117,6 +120,8 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runConfig(p, args[1:], stdout)
 	case "doctor":
 		return runDoctor(p, stdout)
+	case "refresh-git-dirty":
+		return runRefreshGitDirty(p, args[1:])
 	case "install-skill":
 		return runInstallSkill(p, stdout)
 	case "uninstall-skill":
@@ -135,10 +140,24 @@ func runProxy(ctx context.Context, p Paths, f Flags, stdin io.Reader, stdout, st
 		ProxyCommand: cfg.Proxy.Command,
 		ProxyArgs:    cfg.Proxy.Args,
 		CaptureDir:   p.Capture,
+		StateDir:     p.State,
 		Render:       cfg.Render,
 		NoColor:      f.NoColor,
 		Version:      Version,
 	}, stdin, stdout, stderr)
+}
+
+// runRefreshGitDirty backs the hidden `refresh-git-dirty <dir>` subcommand.
+// The renderer starts it detached when the git_dirty segment's cache has
+// gone stale; it runs git out of band and writes the refreshed count for
+// the NEXT render to pick up. Deliberately silent — nothing reads its
+// output, and a failure must not surface anywhere near the status line.
+func runRefreshGitDirty(p Paths, args []string) error {
+	if len(args) == 0 || p.State == "" {
+		return nil
+	}
+	_ = render.RefreshGitDirty(p.State, args[0])
+	return nil
 }
 
 func runInstall(p Paths, stdout io.Writer) error {

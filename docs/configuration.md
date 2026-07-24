@@ -307,8 +307,8 @@ Per-segment additional fields are documented under each type below.
 
 | Field           | Used by                              | Notes                                                |
 | --------------- | ------------------------------------ | ---------------------------------------------------- |
-| `label`         | `text`, `effort`, `output_style`, `git_branch`, `limit_5h`, `limit_7d` | Overrides each segment's default label prefix. |
-| `format`        | `cwd`, `cost`                        | Per-type format string or shape selector.            |
+| `label`         | `text`, `effort`, `output_style`, `git_branch`, `git_dirty`, `limit_5h`, `limit_7d` | Overrides each segment's default label prefix. |
+| `format`        | `cwd`, `cost`, `git_dirty`, `tty_size` | Per-type format string or shape selector.          |
 | `show_1m_flag`  | `model`                              | Appends `" 1M"` when the payload's `exceeds_200k_tokens` is true. |
 | `style`         | `context`, `limit_5h`, `limit_7d`    | Selects between presentation variants.               |
 | `bar_width`     | `context`, `limit_5h`, `limit_7d`    | Circle-bar length in cells. Default `16`; zero or negative falls back to the default. See [`bar_width`](#bar_width). |
@@ -586,6 +586,44 @@ is inside a submodule working tree:
 To show both at once, place two `git_branch` segments with different
 scopes — e.g. `{"scope": "local", "label": "sub"}` next to
 `{"scope": "toplevel", "label": "top"}`.
+
+#### `git_dirty`
+
+Number of paths `git status --porcelain` reports as changed in the
+repository containing `cwd` — modified, staged, deleted, renamed, and
+untracked alike. Hidden for a clean tree, outside a repository, and until
+the first count is available, so the segment and its separator drop out
+entirely.
+
+`format` supports the `{n}` placeholder and defaults to `"*{n}"`; a
+non-empty `label` is prefixed as `"<label>: <body>"`.
+
+```json
+{"type": "git_dirty"}                       // "*3"
+{"type": "git_dirty", "format": "±{n}"}     // "±3"
+{"type": "git_dirty", "label": "dirty"}     // "dirty: *3"
+```
+
+**The count is refreshed out of band.** Unlike every other segment,
+a dirty count cannot be read from a single file — it is a comparison of
+the index against the working tree, which means running `git`. Rendering
+is therefore never allowed to do it: the segment reads a cached number and
+prints it immediately, and when that number is older than 3 seconds it
+starts a detached `ccsb refresh-git-dirty <dir>` that updates the cache for
+the *next* status update. Consequences worth knowing:
+
+- The render path stays free of subprocesses; a huge or slow repository
+  can never delay the status line.
+- The number can lag by one status update, and the segment stays hidden
+  until the first refresh has completed.
+- The cache lives at `$XDG_STATE_HOME/ccsb/git-dirty/<hash>.json`, one
+  entry per repository. Deleting it is harmless — the next render
+  repopulates it.
+- `git` must be on `PATH` for the refresher. Without it the segment simply
+  stays hidden.
+
+This is the only segment that runs a subprocess, and it only does so when
+a config asks for it — it is absent from the default layout.
 
 #### `tty_size`
 
