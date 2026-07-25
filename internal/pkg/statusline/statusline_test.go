@@ -361,8 +361,7 @@ func TestRun_ProxyErrorPropagated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected proxy error to propagate")
 	}
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) {
+	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 		t.Errorf("expected *exec.ExitError, got %T", err)
 	}
 }
@@ -467,8 +466,9 @@ func TestRun_StdinIsCapped(t *testing.T) {
 	if err := statusline.Run(ctx, statusline.Options{NoColor: true}, in, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Output is the last-resort fallback: the payload is not valid JSON,
-	// so render emits the placeholder line.
+	// The payload is not valid JSON, so detectSchemaIssue fires and the
+	// default layout's schema_health segment renders the ☠ marker — the
+	// bar is never blank.
 	if out.Len() == 0 {
 		t.Error("expected fallback output, got empty")
 	}

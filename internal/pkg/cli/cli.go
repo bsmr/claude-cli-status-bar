@@ -172,7 +172,18 @@ func runInstall(p Paths, stdout io.Writer) error {
 
 	alreadyHooked := pointsToSelf(s, p.Self)
 
-	if !alreadyHooked {
+	// Seed backup and proxy only on the first install: ccsb must not be
+	// hooked yet (otherwise the "previous" line is ccsb itself) and no
+	// backup may exist yet. Guarding on the empty backup rather than on
+	// alreadyHooked alone keeps the documented "never overwrites an
+	// existing backup" invariant even when settings.json has meanwhile
+	// been re-pointed at some third command — uninstall must still restore
+	// the statusLine ccsb originally displaced, not that intermediate one.
+	// Proxy derivation stays inside the same guard on purpose: once the
+	// backup exists the proxy block belongs to the user (`ccsb mode`,
+	// `ccsb doctor`), and re-deriving it here would silently undo a
+	// deliberate native-mode choice.
+	if !alreadyHooked && len(cfg.Backup.PreviousStatusLine) == 0 {
 		if existing, ok := claudesettings.GetStatusLine(s); ok {
 			cfg.Backup.PreviousStatusLine = existing
 			// When the previous statusLine is the canonical ccstatusline
@@ -187,8 +198,6 @@ func runInstall(p Paths, stdout io.Writer) error {
 					}
 				}
 			}
-		} else {
-			cfg.Backup.PreviousStatusLine = nil
 		}
 	}
 

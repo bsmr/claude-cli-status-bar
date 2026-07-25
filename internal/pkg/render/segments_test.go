@@ -69,6 +69,26 @@ func TestRenderOutputStyle_PrefixesWithLabel(t *testing.T) {
 	}
 }
 
+// TestRenderOutputStyle_EmptyNameIsHidden pins the hide-when-no-data guard:
+// a payload without output_style must drop the segment entirely rather than
+// emit a bare "style: " label.
+func TestRenderOutputStyle_EmptyNameIsHidden(t *testing.T) {
+	if got := renderOutputStyle(&payload{}, Segment{}, renderEnv{}); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+	// A custom label must not resurrect the segment either.
+	if got := renderOutputStyle(&payload{}, Segment{Label: "os"}, renderEnv{}); got != "" {
+		t.Errorf("labelled: got %q, want empty", got)
+	}
+}
+
+func TestRenderOutputStyle_CustomLabel(t *testing.T) {
+	p := &payload{OutputStyle: outputF{Name: "default"}}
+	if got := renderOutputStyle(p, Segment{Label: "os"}, renderEnv{}); got != "os: default" {
+		t.Errorf("got %q, want \"os: default\"", got)
+	}
+}
+
 func TestRenderCwd_BasenameOnly(t *testing.T) {
 	p := &payload{Workspace: workspace{CurrentDir: "/home/u/projects/foo"}}
 	if got := renderCwd(p, Segment{}, renderEnv{}); got != "foo" {
@@ -313,7 +333,7 @@ func TestRenderLimit_BarFGColorsBarOnly(t *testing.T) {
 	}
 }
 
-func TestMakeBar_CircleSequence(t *testing.T) {
+func TestMakeBarGlyphs_CircleSequence(t *testing.T) {
 	// 4-cell bar: 16 quarter-steps total; each quarter-step = 6.25 pp.
 	// 1 full cell = 4 quarters = 25 pp.
 	for _, tc := range []struct {
@@ -329,8 +349,29 @@ func TestMakeBar_CircleSequence(t *testing.T) {
 		{18.75, "◕○○○"}, // 0 full, remainder 3
 		{31.25, "●◔○○"}, // 1 full, remainder 1
 	} {
-		if got := makeBar(tc.pct, 4); got != tc.want {
-			t.Errorf("makeBar(%.4f, 4) = %q, want %q", tc.pct, got, tc.want)
+		if got := makeBarGlyphs(tc.pct, 4, circleSteps); got != tc.want {
+			t.Errorf("circles %.4f%%: got %q, want %q", tc.pct, got, tc.want)
+		}
+	}
+}
+
+// TestFormatTokens_AllBranches covers every branch of the compaction,
+// including the two the segment tests never reach: the plain "%d" case for
+// the sub-1000 counts of an early session, and the fractional "%.1fM" the
+// docstring promises.
+func TestFormatTokens_AllBranches(t *testing.T) {
+	for _, tc := range []struct {
+		n    int64
+		want string
+	}{
+		{999, "999"},
+		{1234, "1k"},
+		{273000, "273k"},
+		{1000000, "1M"},
+		{1500000, "1.5M"},
+	} {
+		if got := formatTokens(tc.n); got != tc.want {
+			t.Errorf("formatTokens(%d) = %q, want %q", tc.n, got, tc.want)
 		}
 	}
 }
@@ -369,7 +410,7 @@ func TestMakeBarGlyphs_CustomTwoStep(t *testing.T) {
 }
 
 func TestMakeBarGlyphs_ShortRampFallsBackToCircles(t *testing.T) {
-	if got := makeBarGlyphs(50, 4, []string{"x"}); got != makeBar(50, 4) {
+	if got := makeBarGlyphs(50, 4, []string{"x"}); got != makeBarGlyphs(50, 4, circleSteps) {
 		t.Errorf("short ramp should fall back to circles, got %q", got)
 	}
 }

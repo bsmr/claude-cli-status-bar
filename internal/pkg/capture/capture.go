@@ -25,9 +25,9 @@ import (
 
 const sessionPlaceholder = "unknown"
 
-// Save writes payload to dir as <basename>.json. dir is created with 0755 if
-// missing. The session id is sanitised so path traversal and slashes cannot
-// escape dir.
+// Save writes payload to dir as <basename>.json. dir is created with 0o700 if
+// missing and the file lands as 0o600 — captures are user-private state. The
+// session id is sanitised so path traversal and slashes cannot escape dir.
 func Save(dir, sessionID string, payload []byte, now time.Time) (string, error) {
 	if len(payload) == 0 {
 		return "", errors.New("capture: empty payload")

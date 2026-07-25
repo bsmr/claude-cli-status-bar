@@ -173,6 +173,39 @@ func TestWriteAtomic_ConcurrentWritersLeaveValidFile(t *testing.T) {
 	}
 }
 
+// TestWriteAtomic_RenameFailureCleansUpTemp exercises the last failure branch
+// after the temp file exists: a non-empty directory sitting at path makes
+// os.Rename fail, and the deferred cleanup must still remove the temp file so
+// no .tmp debris accumulates in the target directory.
+func TestWriteAtomic_RenameFailureCleansUpTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.txt")
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatalf("seed dir at path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "child"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed child: %v", err)
+	}
+
+	err := WriteAtomic(path, []byte("payload"))
+	if err == nil {
+		t.Fatal("expected error when path is a non-empty directory")
+	}
+	if !strings.Contains(err.Error(), "rename") {
+		t.Errorf("unexpected error shape: %v", err)
+	}
+
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("readdir: %v", readErr)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file left behind after rename failure: %s", e.Name())
+		}
+	}
+}
+
 func TestWriteAtomic_DirCreationFails(t *testing.T) {
 	// Create a regular file where the parent dir would need to be created.
 	// MkdirAll will fail because a non-dir already occupies the path.

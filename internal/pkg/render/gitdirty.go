@@ -174,13 +174,26 @@ func countDirty(dir string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dirtyTimeout)
 	defer cancel()
 
-	// -C makes git resolve the repository from dir, so the refresher needs
-	// no working-directory manipulation of its own process.
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain").Output()
+	out, err := exec.CommandContext(ctx, "git", dirtyStatusArgs(dir)...).Output()
 	if err != nil {
 		return 0, err
 	}
 	return parseDirtyCount(out), nil
+}
+
+// dirtyStatusArgs builds the argv for the dirty count.
+//
+// -C makes git resolve the repository from dir, so the refresher needs no
+// working-directory manipulation of its own process. dir comes from the
+// untrusted payload (workspace.current_dir), and `git status` honours the
+// target repository's own .git/config — where core.fsmonitor names a program
+// git EXECUTES during the status walk. git's safe.directory guard only fires
+// for cross-owner repositories, so a same-owner hostile repository is not
+// covered by it. Command-line -c has the highest config precedence, so
+// clearing core.fsmonitor here cannot be re-enabled by the repository. The
+// count needs no fsmonitor acceleration, so nothing is lost.
+func dirtyStatusArgs(dir string) []string {
+	return []string{"-c", "core.fsmonitor=", "-C", dir, "status", "--porcelain"}
 }
 
 // parseDirtyCount counts the entries in `git status --porcelain` output.
@@ -188,7 +201,7 @@ func countDirty(dir string) (int, error) {
 // of non-empty lines; the trailing newline of the last entry is ignored.
 func parseDirtyCount(out []byte) int {
 	n := 0
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if strings.TrimSpace(line) != "" {
 			n++
 		}

@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/fileutil"
 )
 
 //go:embed assets/ccsb-wizard.md
@@ -18,13 +20,14 @@ var wizardSkill []byte
 func WizardSkillContent() []byte { return wizardSkill }
 
 func runInstallSkill(p Paths, stdout io.Writer) error {
-	if err := os.MkdirAll(p.ClaudeSkillsDir, 0o755); err != nil {
-		return fmt.Errorf("ccsb: create skills dir: %w", err)
-	}
 	dest := filepath.Join(p.ClaudeSkillsDir, "ccsb-wizard.md")
 	_, statErr := os.Stat(dest)
 	exists := statErr == nil
-	if err := os.WriteFile(dest, wizardSkill, 0o644); err != nil {
+	// WriteAtomic creates the skills dir (0o700) and lands the file as
+	// 0o600 via temp+rename, matching every other persistent writer in
+	// ccsb — a concurrent /ccsb-wizard load can never read a half-written
+	// skill file.
+	if err := fileutil.WriteAtomic(dest, wizardSkill); err != nil {
 		return fmt.Errorf("ccsb: write skill file: %w", err)
 	}
 	if !exists {

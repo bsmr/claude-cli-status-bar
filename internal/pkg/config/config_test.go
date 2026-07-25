@@ -55,6 +55,16 @@ func TestLoad_InvalidJSONReturnsError(t *testing.T) {
 	}
 }
 
+func TestSave_EmptyPathReturnsError(t *testing.T) {
+	err := config.Save("", config.Config{})
+	if err == nil {
+		t.Fatal("expected error for empty path")
+	}
+	if !strings.Contains(err.Error(), "empty path") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestSave_CreatesParentDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "ccsb", "config.json")
 	cfg := config.Config{

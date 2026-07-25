@@ -65,13 +65,20 @@ func TestRender_DefaultLayoutDevVersionShowsSkull(t *testing.T) {
 	}
 }
 
-func TestRender_GlobalParseFailureReturnsLastResort(t *testing.T) {
-	got, err := Render(Options{}, []byte("not json"))
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	if got == "" {
-		t.Error("must emit something even on parse failure")
+// TestRender_BrokenPayloadRendersSchemaHealthMarker pins the
+// never-blank guarantee of the default layout: for any payload the
+// parser cannot make sense of, detectSchemaIssue fires and the default
+// row's schema_health segment emits the "☠" marker, so Claude Code
+// always gets a non-empty status line.
+func TestRender_BrokenPayloadRendersSchemaHealthMarker(t *testing.T) {
+	for _, raw := range []string{"not json", "{}", "[1,2,3]", `{"model":123}`} {
+		got, err := Render(Options{}, []byte(raw))
+		if err != nil {
+			t.Fatalf("Render(%q): %v", raw, err)
+		}
+		if !strings.Contains(got, "☠") {
+			t.Errorf("Render(%q) = %q, want the schema_health ☠ marker", raw, got)
+		}
 	}
 }
 
@@ -1193,14 +1200,13 @@ func TestRowJSON_PaletteRoundTrip(t *testing.T) {
 
 func TestEffectiveSegmentBg(t *testing.T) {
 	cases := []struct {
-		name            string
-		row             Row
-		seg             Segment
-		visibleIndex    int
-		globalPalette   []string
-		paletteStart    int
-		powerlineActive bool
-		want            string
+		name          string
+		row           Row
+		seg           Segment
+		visibleIndex  int
+		globalPalette []string
+		paletteStart  int
+		want          string
 	}{
 		{
 			name: "Segment.BG overrides everything",
@@ -1231,43 +1237,33 @@ func TestEffectiveSegmentBg(t *testing.T) {
 			want: "100",
 		},
 		{
-			name:            "globalPalette when Powerline and no row source",
-			row:             Row{},
-			seg:             Segment{},
-			visibleIndex:    1,
-			globalPalette:   []string{"232", "233", "234", "235"},
-			paletteStart:    0,
-			powerlineActive: true,
-			want:            "233", // (0+1) % 4
+			name:          "globalPalette when no row source",
+			row:           Row{},
+			seg:           Segment{},
+			visibleIndex:  1,
+			globalPalette: []string{"232", "233", "234", "235"},
+			paletteStart:  0,
+			want:          "233", // (0+1) % 4
 		},
 		{
-			name:            "globalPalette honors paletteStart offset",
-			row:             Row{},
-			seg:             Segment{},
-			visibleIndex:    0,
-			globalPalette:   []string{"232", "233", "234", "235", "236"},
-			paletteStart:    2,
-			powerlineActive: true,
-			want:            "234", // (2+0) % 5
+			name:          "globalPalette honors paletteStart offset",
+			row:           Row{},
+			seg:           Segment{},
+			visibleIndex:  0,
+			globalPalette: []string{"232", "233", "234", "235", "236"},
+			paletteStart:  2,
+			want:          "234", // (2+0) % 5
 		},
 		{
-			name:            "empty string when no Powerline and no source",
-			row:             Row{},
-			seg:             Segment{},
-			powerlineActive: false,
-			want:            "",
-		},
-		{
-			name:            "empty string when Powerline but globalPalette empty",
-			row:             Row{},
-			seg:             Segment{},
-			powerlineActive: true,
-			want:            "",
+			name: "empty string when globalPalette empty",
+			row:  Row{},
+			seg:  Segment{},
+			want: "",
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := effectiveSegmentBg(c.row, c.seg, c.visibleIndex, c.globalPalette, c.paletteStart, c.powerlineActive)
+			got := effectiveSegmentBg(c.row, c.seg, c.visibleIndex, c.globalPalette, c.paletteStart)
 			if got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
@@ -1279,7 +1275,7 @@ func TestEffectiveSegmentBg_PaletteRotation(t *testing.T) {
 	row := Row{Palette: []string{"234", "236", "238"}}
 	want := []string{"234", "236", "238", "234", "236"}
 	for i, w := range want {
-		if got := effectiveSegmentBg(row, Segment{}, i, nil, 0, true); got != w {
+		if got := effectiveSegmentBg(row, Segment{}, i, nil, 0); got != w {
 			t.Errorf("visibleIndex=%d: got %q, want %q", i, got, w)
 		}
 	}
@@ -2227,7 +2223,7 @@ func TestRender_SchemaHealthOnlyInDefaultLayoutByDefault(t *testing.T) {
 // --- parsePayload (per-segment isolation) -----------------------------------
 
 func TestParsePayload_TopLevelErrorOnNonObject(t *testing.T) {
-	p, errs := parsePayload([]byte("not json"))
+	p, errs, _ := parsePayload([]byte("not json"))
 	if errs.topLevel == nil {
 		t.Error("expected topLevel error on garbage input")
 	}
@@ -2240,7 +2236,7 @@ func TestParsePayload_TopLevelErrorOnNonObject(t *testing.T) {
 }
 
 func TestParsePayload_TopLevelErrorOnArray(t *testing.T) {
-	_, errs := parsePayload([]byte(`[1,2,3]`))
+	_, errs, _ := parsePayload([]byte(`[1,2,3]`))
 	if errs.topLevel == nil {
 		t.Error("expected topLevel error on JSON array (we want a top-level object)")
 	}
@@ -2254,7 +2250,7 @@ func TestParsePayload_AllValidNoErrors(t *testing.T) {
 		"cost": {"total_cost_usd": 1.23},
 		"context_window": {"used_percentage": 50}
 	}`)
-	p, errs := parsePayload(raw)
+	p, errs, _ := parsePayload(raw)
 	if errs.hasIssue() {
 		t.Errorf("expected no issues, got %+v", errs)
 	}
@@ -2280,7 +2276,7 @@ func TestParsePayload_FieldErrorIsolatedFromOtherFields(t *testing.T) {
 		"cost": {"total_cost_usd": "not a number"},
 		"context_window": {"used_percentage": 50, "context_window_size": 1000}
 	}`)
-	p, errs := parsePayload(raw)
+	p, errs, _ := parsePayload(raw)
 	if errs.topLevel != nil {
 		t.Errorf("topLevel should be nil — only the cost field is broken: %v", errs.topLevel)
 	}
@@ -2308,7 +2304,7 @@ func TestParsePayload_MissingFieldIsNotAnError(t *testing.T) {
 		"model": {"display_name": "Opus"},
 		"workspace": {"current_dir": "/x"}
 	}`)
-	p, errs := parsePayload(raw)
+	p, errs, _ := parsePayload(raw)
 	if errs.hasIssue() {
 		t.Errorf("missing fields must not be reported as issues: %+v", errs)
 	}
@@ -2326,7 +2322,7 @@ func TestParsePayload_UnknownKeysAreIgnored(t *testing.T) {
 		"workspace": {"current_dir": "/x"},
 		"shiny_new_field": {"a": 1, "b": [2, 3]}
 	}`)
-	_, errs := parsePayload(raw)
+	_, errs, _ := parsePayload(raw)
 	if errs.hasIssue() {
 		t.Errorf("unknown keys must be ignored, got %+v", errs)
 	}
@@ -2413,7 +2409,7 @@ func TestExpectedPayloadKeys_MatchesParsePayload(t *testing.T) {
 		parts = append(parts, fmt.Sprintf("%q: null", k))
 	}
 	raw := []byte("{" + strings.Join(parts, ",") + "}")
-	_, errs := parsePayload(raw)
+	_, errs, _ := parsePayload(raw)
 	if errs.topLevel != nil {
 		t.Fatalf("topLevel must be nil for a valid object, got %v", errs.topLevel)
 	}
@@ -2423,6 +2419,35 @@ func TestExpectedPayloadKeys_MatchesParsePayload(t *testing.T) {
 	// Sanity: the list must not be empty (would defeat the purpose).
 	if len(expectedPayloadKeys) < 5 {
 		t.Errorf("expectedPayloadKeys is suspiciously short (%d), did someone delete entries?", len(expectedPayloadKeys))
+	}
+}
+
+// --- SchemaVersionOf --------------------------------------------------------
+
+// TestSchemaVersionOf pins the tolerance contract that is the whole
+// reason this helper exists next to parsePayload: unlike parsePayload
+// it must NOT fail fast on a top-level non-object. Anything that is not
+// a JSON object carrying a string schema_version yields "" — never a
+// panic, never a stale value — so statusline's version diff simply sees
+// "no version" for malformed payloads.
+func TestSchemaVersionOf(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"object with version", `{"schema_version":"2.1"}`, "2.1"},
+		{"object without version", `{}`, ""},
+		{"top-level array", `[1,2,3]`, ""},
+		{"not json at all", `not json`, ""},
+		{"wrong field type", `{"schema_version":123}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := SchemaVersionOf([]byte(c.raw)); got != c.want {
+				t.Errorf("SchemaVersionOf(%q) = %q, want %q", c.raw, got, c.want)
+			}
+		})
 	}
 }
 
@@ -3091,6 +3116,42 @@ func TestRender_CustomPaletteStride(t *testing.T) {
 	}
 }
 
+// TestRender_HiddenRowDoesNotSkipPaletteShades verifies that a row
+// whose segments all render empty is dropped without consuming a
+// palette offset: the first VISIBLE row must still start at palette
+// index 0 and the following one exactly one stride later. Keying the
+// offset to the configured row index instead would leave a
+// stride-sized jump in the gradient.
+func TestRender_HiddenRowDoesNotSkipPaletteShades(t *testing.T) {
+	cfg := Config{
+		Width:         200,
+		Margin:        new(0),
+		Powerline:     true,
+		Palette:       []string{"232", "233", "234", "235", "236"},
+		PaletteStride: 1,
+		Rows: []Row{
+			// output_style hides itself on a payload without an
+			// output_style key, so this row emits nothing at all.
+			{Segments: []Segment{{Type: "output_style"}}},
+			{Segments: []Segment{{Type: "text", Label: "A"}}},
+			{Segments: []Segment{{Type: "text", Label: "B"}}},
+		},
+	}
+	got, err := Render(Options{Config: cfg}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	rows := strings.Split(got, "\n")
+	if len(rows) != 2 {
+		t.Fatalf("want 2 visible rows, got %d (%q)", len(rows), got)
+	}
+	for i, w := range []string{"232", "233"} {
+		if !strings.Contains(rows[i], "\x1b[48;5;"+w+"m") {
+			t.Errorf("visible row %d: want bg %s, got %q", i, w, rows[i])
+		}
+	}
+}
+
 // TestRender_PaletteStrideWrapsAroundCleanly verifies the modulo
 // behaviour when paletteStart + visibleIndex exceeds the palette
 // length: we must rotate, not crash.
@@ -3397,7 +3458,7 @@ func TestRender_ShrinkKeepsRightAlignedVersionIntact_CustomConfig(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	line := strings.Split(got, "\n")[0]
+	line, _, _ := strings.Cut(got, "\n")
 	if !strings.Contains(line, "v9.9.9") {
 		t.Errorf("version must survive in full, got %q", line)
 	}
