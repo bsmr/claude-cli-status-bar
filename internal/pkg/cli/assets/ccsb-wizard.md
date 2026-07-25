@@ -115,6 +115,21 @@ Percentage segments (`context`, `limit_5h`, `limit_7d`) additionally accept:
   recolours at those percentages
 - `threshold_target`: `"pct"` recolours only the digits, `"all"` the whole segment
 
+The `version` segment additionally accepts:
+- `check_update`: `true` enables a background check against GitHub for a
+  newer release, appending `" (↑ v<latest>)"` when one exists. Defaults to
+  `false` (the Go zero value) unless explicitly set — this is the one field
+  where "the default" depends on which config you mean: ccsb's own shipped
+  default layout sets it `true`, but any config the wizard writes or a user
+  hand-edits starts with it off unless this key is present.
+- `update_check_interval`: a Go duration string (e.g. `"6h"`) bounding how
+  often the check re-runs; defaults to `"24h"` when empty or unparsable
+- `update_minor_fg` / `update_major_fg` / `update_big_fg`: escalating
+  foreground colors for the update suffix, keyed by how far behind the
+  latest release is (newer minor / newer major / newer major by two-plus);
+  a newer patch reuses the segment's own `fg`. Defaults `"136"` / `"208"` /
+  `"160"` (yellow → orange → red) in ccsb's shipped default layout
+
 Colors: 232–255 are a grayscale ramp (232 ≈ near-black, 255 ≈ near-white).
 Common accents: 196 red · 226 yellow · 46 green · 51 cyan · 21 blue · 135 purple.
 

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,51 +86,14 @@ func dirtyLockPath(stateDir, gitDir string) string {
 // a refresh that cannot be coordinated is skipped, never duplicated — the
 // cache simply stays as-is for the next render to retry.
 func acquireRefreshLock(stateDir, gitDir string) bool {
-	path := dirtyLockPath(stateDir, gitDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return false
-	}
-	switch f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600); {
-	case err == nil:
-		_ = f.Close()
-		return true
-	case !errors.Is(err, os.ErrExist):
-		return false // cannot coordinate — do not risk a duplicate spawn
-	}
-	// Marker present: reclaim it only if it is older than the TTL (orphaned —
-	// its refresher crashed or was killed before releasing). Remove and
-	// recreate.
-	//
-	// ponytail: the reclaim branch is best-effort, NOT strict single-flight.
-	// Replacing an orphaned marker atomically is a compare-and-swap on a file,
-	// which POSIX does not offer without flock; any Remove/rename briefly
-	// empties the path and lets a peer's O_EXCL create win alongside this one.
-	// So two sessions reclaiming the SAME orphan at the SAME instant can each
-	// spawn — bounded by the number of concurrent sessions, self-healing, and
-	// never a wrong count (the cache is written only via atomic rename and the
-	// marker never gates cache contents). It costs a few extra `git status`
-	// processes in the rare window after a refresher crash. A real lock (flock,
-	// + a Windows port, + moving the lock into the detached refresher) is not
-	// worth that. The steady-state create path above IS strict single-flight.
-	if info, err := os.Stat(path); err != nil || time.Since(info.ModTime()) < refreshLockTTL {
-		return false // a refresh is in flight
-	}
-	if err := os.Remove(path); err != nil {
-		return false
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return false // a peer recreated the marker first
-	}
-	_ = f.Close()
-	return true
+	return acquireLock(dirtyLockPath(stateDir, gitDir), refreshLockTTL)
 }
 
 // releaseRefreshLock clears the single-flight marker for gitDir. The refresher
 // calls it when finished so the next stale-cache render can start a new one; a
 // missing marker (already reclaimed via the TTL) is fine.
 func releaseRefreshLock(stateDir, gitDir string) {
-	_ = os.Remove(dirtyLockPath(stateDir, gitDir))
+	releaseLock(dirtyLockPath(stateDir, gitDir))
 }
 
 // RefreshGitDirty counts the changed paths in the repository containing dir
