@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -262,5 +263,215 @@ func TestDefaultDir_FallsBackToHomeLocalState(t *testing.T) {
 func TestDefaultDir_EmptyWhenNoHomeAndNoXDG(t *testing.T) {
 	if got := capture.DefaultDir("", ""); got != "" {
 		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestTimeFromName_ParsesTheBasenameTimestamp(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want time.Time
+		ok   bool
+	}{
+		{"json capture", "2026-05-10T14:30:45.123456789Z-sess-abc.json", time.Date(2026, 5, 10, 14, 30, 45, 123456789, time.UTC), true},
+		{"out sibling", "2026-05-10T14:30:45.123456789Z-sess-abc.out", time.Date(2026, 5, 10, 14, 30, 45, 123456789, time.UTC), true},
+		{"trailing zeros trimmed", "2026-01-01T00:00:00Z-s.json", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), true},
+		{"no Z at all", "notes.json", time.Time{}, false},
+		{"Z but unparsable", "2026-13-45T99:99:99Z-x.json", time.Time{}, false},
+		{"empty", "", time.Time{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := capture.TimeFromName(tt.in)
+			if ok != tt.ok {
+				t.Fatalf("ok: got %v, want %v", ok, tt.ok)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("time: got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// writeCapture creates a capture-shaped file so Prune has something with a
+// parsable name to act on. Content is irrelevant to pruning.
+func writeCapture(t *testing.T, dir string, at time.Time, session, ext string) string {
+	t.Helper()
+	name := at.UTC().Format(time.RFC3339Nano) + "-" + session + "." + ext
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile %s: %v", name, err)
+	}
+	return name
+}
+
+func remaining(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	slices.Sort(names)
+	return names
+}
+
+func TestPrune_RemovesOnlyFilesOlderThanCutoff(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	writeCapture(t, dir, old, "a", "json")
+	writeCapture(t, dir, old, "a", "out")
+	keepJSON := writeCapture(t, dir, recent, "b", "json")
+
+	cutoff := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	removed, err := capture.Prune(dir, cutoff)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed: got %d, want 2", removed)
+	}
+	if got, want := remaining(t, dir), []string{keepJSON}; !slices.Equal(got, want) {
+		t.Errorf("remaining: got %v, want %v", got, want)
+	}
+}
+
+// "before cutoff" is exclusive: a capture stamped exactly at the cutoff is
+// newer-or-equal and stays. Unobservable in practice (cutoffs come from
+// time.Now() and basenames carry nanoseconds) but it is the documented edge.
+func TestPrune_KeepsACaptureStampedExactlyAtTheCutoff(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	name := writeCapture(t, dir, at, "edge", "json")
+
+	removed, err := capture.Prune(dir, at)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed: got %d, want 0", removed)
+	}
+	if got, want := remaining(t, dir), []string{name}; !slices.Equal(got, want) {
+		t.Errorf("remaining: got %v, want %v", got, want)
+	}
+}
+
+func TestPrune_CutoffNowRemovesEverything(t *testing.T) {
+	dir := t.TempDir()
+	writeCapture(t, dir, time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), "a", "json")
+	writeCapture(t, dir, time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC), "b", "diag")
+
+	removed, err := capture.Prune(dir, time.Now())
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed: got %d, want 2", removed)
+	}
+	if got := remaining(t, dir); len(got) != 0 {
+		t.Errorf("remaining: got %v, want none", got)
+	}
+}
+
+func TestPrune_NeverTouchesFilesWithoutAParsableTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"notes.json", "2026-13-45T99:99:99Z-x.json", "README"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatalf("WriteFile %s: %v", name, err)
+		}
+	}
+
+	removed, err := capture.Prune(dir, time.Now())
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed: got %d, want 0", removed)
+	}
+	if got := remaining(t, dir); len(got) != 3 {
+		t.Errorf("remaining: got %v, want all 3 kept", got)
+	}
+}
+
+func TestPrune_MissingDirectoryIsNotAnError(t *testing.T) {
+	removed, err := capture.Prune(filepath.Join(t.TempDir(), "absent"), time.Now())
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed: got %d, want 0", removed)
+	}
+}
+
+func TestPrune_SkipsSubdirectories(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "2026-05-01T12:00:00Z-nested")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	removed, err := capture.Prune(dir, time.Now())
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed: got %d, want 0", removed)
+	}
+	if _, err := os.Stat(sub); err != nil {
+		t.Errorf("subdirectory was removed: %v", err)
+	}
+}
+
+func TestPrune_EmptyDirArgumentIsAnError(t *testing.T) {
+	if _, err := capture.Prune("", time.Now()); err == nil {
+		t.Fatal("expected an error for an empty dir")
+	}
+}
+
+func TestPrune_UnreadableDirectoryIsReported(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	dir := filepath.Join(t.TempDir(), "captures")
+	if err := os.Mkdir(dir, 0o000); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, err := capture.Prune(dir, time.Now()); err == nil {
+		t.Fatal("expected an error for an unreadable dir")
+	}
+}
+
+// A file cannot be unlinked when its PARENT directory is not writable, so an
+// r-x capture dir drives the remove failure without touching the file itself.
+func TestPrune_RemoveFailureAbortsAndIsReported(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	dir := t.TempDir()
+	writeCapture(t, dir, time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), "a", "json")
+	writeCapture(t, dir, time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC), "b", "json")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	removed, err := capture.Prune(dir, time.Now())
+	if err == nil {
+		t.Fatal("expected the remove failure to be reported")
+	}
+	if !strings.Contains(err.Error(), "remove") {
+		t.Errorf("error should name the failing operation, got: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed: got %d, want 0", removed)
+	}
+	if got := remaining(t, dir); len(got) != 2 {
+		t.Errorf("both files should remain, %d do: %v", len(got), got)
 	}
 }

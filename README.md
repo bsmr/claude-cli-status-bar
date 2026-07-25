@@ -180,11 +180,20 @@ previous `statusLine` value so `uninstall` can restore it. The `render`
 section and the full segment vocabulary are documented in
 [`docs/configuration.md`](docs/configuration.md).
 
-The capture directory is append-only and never pruned: every status update
-writes one to four files into it (`.json` always, plus `.out`, `.err` and `.diag`
-when non-empty), so it grows without bound. Only `ccsb doctor` ever reads a
-capture back, and only the newest one — deleting the directory, in whole or
-in part, is safe at any time.
+The capture directory is append-only: every status update writes one to four
+files into it (`.json` always, plus `.out`, `.err` and `.diag` when non-empty),
+so it grows until you clear it. Only `ccsb doctor` ever reads a capture back,
+and only the newest one — removing the rest is safe at any time:
+
+```bash
+ccsb captures clean                     # remove all captures
+ccsb captures clean --older-than 7d     # keep the last week (also accepts 24h, 90m)
+```
+
+Only files whose name *starts* with an RFC3339 UTC timestamp are considered,
+so `notes.txt` survives — but anything you name with a leading timestamp is
+treated as a capture and removed. Keep your own files elsewhere, or give them
+a name that does not start with one.
 
 ## Roadmap
 
