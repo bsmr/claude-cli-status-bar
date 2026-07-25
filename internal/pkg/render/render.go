@@ -489,19 +489,25 @@ func ExpectedPayloadKeys() []string {
 // The list of keys this function recognises is duplicated in
 // expectedPayloadKeys for ccsb doctor's schema-check; the two
 // lists must stay in sync (enforced by test).
-func parsePayload(raw []byte) (payload, parseErrors) {
+//
+// The decoded top-level map is returned as the third value so callers
+// that need the payload's raw key set (Diagnose, for its additive-key
+// diff) do not have to unmarshal the same bytes a second time. It is
+// nil when the top-level parse failed. Callers that only want the
+// typed payload discard it with _.
+func parsePayload(raw []byte) (payload, parseErrors, map[string]json.RawMessage) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
-		return payload{}, parseErrors{topLevel: err}
+		return payload{}, parseErrors{topLevel: err}, nil
 	}
 	var p payload
 	errs := parseErrors{}
 	field := func(key string, dst any) {
-		bytes, ok := top[key]
+		val, ok := top[key]
 		if !ok {
 			return
 		}
-		if err := json.Unmarshal(bytes, dst); err != nil {
+		if err := json.Unmarshal(val, dst); err != nil {
 			if errs.fieldErrors == nil {
 				errs.fieldErrors = make(map[string]error)
 			}
@@ -521,7 +527,7 @@ func parsePayload(raw []byte) (payload, parseErrors) {
 	field("thinking", &p.Thinking)
 	field("exceeds_200k_tokens", &p.Exceeds200kT)
 	field("schema_version", &p.SchemaVersion)
-	return p, errs
+	return p, errs, top
 }
 
 // SchemaVersionOf extracts payload.schema_version from raw without
@@ -569,7 +575,7 @@ type Diagnostic struct {
 // Diagnose inspects raw and returns everything notable about its
 // shape relative to ccsb's renderer expectations.
 func Diagnose(raw []byte) Diagnostic {
-	p, errs := parsePayload(raw)
+	p, errs, top := parsePayload(raw)
 	d := Diagnostic{
 		TopLevelError: errs.topLevel,
 		FieldErrors:   errs.fieldErrors,
@@ -586,19 +592,16 @@ func Diagnose(raw []byte) Diagnostic {
 	if p.Workspace.CurrentDir == "" {
 		d.MissingCritical = append(d.MissingCritical, "workspace.current_dir")
 	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &top); err == nil {
-		expected := make(map[string]bool, len(expectedPayloadKeys))
-		for _, k := range expectedPayloadKeys {
-			expected[k] = true
-		}
-		for k := range top {
-			if !expected[k] {
-				d.AdditiveKeys = append(d.AdditiveKeys, k)
-			}
-		}
-		sort.Strings(d.AdditiveKeys)
+	expected := make(map[string]bool, len(expectedPayloadKeys))
+	for _, k := range expectedPayloadKeys {
+		expected[k] = true
 	}
+	for k := range top {
+		if !expected[k] {
+			d.AdditiveKeys = append(d.AdditiveKeys, k)
+		}
+	}
+	sort.Strings(d.AdditiveKeys)
 	return d
 }
 
@@ -779,15 +782,18 @@ func pickGlyph(style string) string {
 //  2. Row.Palette[visibleIndex % len] (per-row rotation, starts at 0)
 //  3. Row.Bg (uniform row fill)
 //  4. globalPalette[(paletteStart + visibleIndex) % len] when
-//     powerlineActive is true and globalPalette is non-empty
-//  5. "" (no bg, natural-mode fallback)
+//     globalPalette is non-empty
+//  5. "" (no bg)
 //
 // visibleIndex is the rank of the segment among the row's non-empty
 // segments — empty segments do not claim a palette slot.
 // paletteStart shifts the global-palette rotation per output row so
 // each row starts a configurable number of shades brighter than the
 // previous one; it has no effect when Row.Palette is set.
-func effectiveSegmentBg(row Row, seg Segment, visibleIndex int, globalPalette []string, paletteStart int, powerlineActive bool) string {
+//
+// Only the Powerline renderer paints backgrounds, so this is reached
+// exclusively from collectVisibleSegments.
+func effectiveSegmentBg(row Row, seg Segment, visibleIndex int, globalPalette []string, paletteStart int) string {
 	if seg.BG != "" {
 		return seg.BG
 	}
@@ -797,7 +803,7 @@ func effectiveSegmentBg(row Row, seg Segment, visibleIndex int, globalPalette []
 	if row.Bg != "" {
 		return row.Bg
 	}
-	if powerlineActive && len(globalPalette) > 0 {
+	if len(globalPalette) > 0 {
 		return globalPalette[(paletteStart+visibleIndex)%len(globalPalette)]
 	}
 	return ""
@@ -844,24 +850,76 @@ func hasAnyShrink(segs []Segment) bool {
 	return false
 }
 
+// rowMetrics is the measured layout cost of one row, as produced by
+// measureRow. widths is indexed by position in row.Segments and holds 0
+// for segments that rendered empty, so callers can key a per-segment
+// decision off the same pass that produced the totals.
+type rowMetrics struct {
+	widths  []int
+	used    int
+	usable  int
+	visible int
+}
+
+// measureRow is the single source of the row width model shared by
+// rowOverflows (reflow) and applyShrink. It renders every segment once,
+// records each visible body's display width (ANSI stripped), and sums
+// them together with the per-style separator cost between visible pairs
+// (powerline chevron triplet or the natural separator string). usable
+// is ttyCols minus both margins, minus the two cap columns when
+// powerlineActive && Caps.
+//
+// The separator term counts visible-1 joins. A natural-mode row with a
+// right-aligned segment actually renders one fewer separator, so the
+// estimate is conservative there — it may report an overflow (or shrink)
+// a few columns early, never late. It likewise ignores the right-align
+// padding gap, which is already zero once used > usable.
+//
+// Callers must handle env.ttyCols == 0 themselves: with no terminal
+// width there is nothing to measure against and usable is meaningless.
+//
+// widths exists for applyShrink, which needs the per-segment breakdown;
+// rowOverflows only reads the totals and ignores it. That small unused
+// allocation is deliberate — keeping one measurement pass is worth more
+// than splitting this into two near-identical helpers again.
+func measureRow(p *payload, row Row, env renderEnv, powerlineActive bool, sep string) rowMetrics {
+	m := rowMetrics{widths: make([]int, len(row.Segments))}
+	for i, seg := range row.Segments {
+		body := renderSegment(p, seg, env)
+		if body == "" {
+			continue
+		}
+		w := displayWidth(body)
+		m.widths[i] = w
+		m.used += w
+		m.visible++
+	}
+	if m.visible > 1 {
+		if powerlineActive {
+			m.used += (m.visible - 1) * powerlineSeparatorWidth
+		} else {
+			m.used += (m.visible - 1) * displayWidth(sep)
+		}
+	}
+	m.usable = env.ttyCols - 2*env.margin
+	if powerlineActive && row.Caps {
+		m.usable -= 2
+	}
+	return m
+}
+
 // applyShrink returns row.Segments unchanged, or — when the row's
 // visible content would overflow the usable width AND the row carries
 // at least one Shrink-marked segment — a copy in which each Shrink
 // segment's effective MaxWidth is lowered (in row order, flooring at
 // shrinkFloor) until the overflow deficit is absorbed. The actual
 // truncation happens later in renderSegment → truncateToWidth; this
-// function only computes and stamps the cap.
+// function only computes and stamps the cap. Because that path is not
+// ANSI-aware, Shrink is documented as safe only on text-style segments
+// (see Segment.Shrink and Segment.MaxWidth).
 //
-// Measurement mirrors rowOverflows exactly (segment body widths via
-// displayWidth, which strips ANSI; per-style separator cost; cap
-// columns when powerlineActive && Caps), so the gap-free width here
-// matches the real overflow condition — when used > usable a
-// right-aligned segment's padding gap is already zero. Like
-// rowOverflows, the separator term counts visible-1 joins; a
-// natural-mode row with a right-aligned segment actually renders one
-// fewer separator, so the estimate is conservative there (it may shrink
-// a few columns more than strictly necessary, never fewer — the
-// protected segment always stays intact).
+// Measurement comes from measureRow, the same helper rowOverflows uses,
+// so the shrink trigger and the reflow trigger cannot drift apart.
 //
 // When ttyCols is unknown (0), no Shrink segment exists, only one
 // segment is visible, or the row already fits, the input slice is
@@ -872,96 +930,45 @@ func applyShrink(p *payload, row Row, env renderEnv, powerlineActive bool, sep s
 	if env.ttyCols == 0 || !hasAnyShrink(row.Segments) {
 		return row.Segments
 	}
-	type cand struct {
-		idx   int
-		width int
-	}
-	var cands []cand
-	used := 0
-	visible := 0
-	for i, seg := range row.Segments {
-		body := renderSegment(p, seg, env)
-		if body == "" {
-			continue
-		}
-		w := displayWidth(body)
-		used += w
-		visible++
-		if seg.Shrink {
-			cands = append(cands, cand{idx: i, width: w})
-		}
-	}
-	if len(cands) == 0 || visible <= 1 {
+	m := measureRow(p, row, env, powerlineActive, sep)
+	if m.visible <= 1 {
 		return row.Segments
 	}
-	if powerlineActive {
-		used += (visible - 1) * powerlineSeparatorWidth
-	} else {
-		used += (visible - 1) * displayWidth(sep)
-	}
-	usable := env.ttyCols - 2*env.margin
-	if powerlineActive && row.Caps {
-		usable -= 2
-	}
-	deficit := used - usable
+	deficit := m.used - m.usable
 	if deficit <= 0 {
 		return row.Segments
 	}
 	out := make([]Segment, len(row.Segments))
 	copy(out, row.Segments)
-	for _, c := range cands {
+	for i, seg := range row.Segments {
 		if deficit <= 0 {
 			break
 		}
-		canGive := c.width - shrinkFloor
-		if canGive <= 0 {
+		// A hidden Shrink segment has width 0, so canGive is
+		// negative and it is skipped along with segments already at
+		// or below the floor.
+		canGive := m.widths[i] - shrinkFloor
+		if !seg.Shrink || canGive <= 0 {
 			continue
 		}
 		take := min(canGive, deficit)
-		out[c.idx].MaxWidth = c.width - take
+		out[i].MaxWidth = m.widths[i] - take
 		deficit -= take
 	}
 	return out
 }
 
 // rowOverflows reports whether the row's visible rendered width would
-// exceed the usable column count (ttyCols - 2*margin, minus cap
-// columns when Caps is active). Returns false when ttyCols is 0
-// (no measurement possible) so reflow degrades to a no-op.
-//
-// The width estimate sums each visible segment's body width, the
-// per-style separator cost between visible pairs (powerline chevron
-// triplet or natural separator string), and approximates the two
-// cap glyphs as 1 col each when Caps is active. It does NOT account
-// for the right-align padding gap; a row that uses right-align AND
-// reflow is unusual and the estimate stays conservative.
+// exceed the usable column count. Returns false when ttyCols is 0 (no
+// measurement possible) so reflow degrades to a no-op, and when fewer
+// than two segments are visible (nothing to reflow against). See
+// measureRow for the width model and its conservative approximations.
 func rowOverflows(p *payload, row Row, env renderEnv, powerlineActive bool, sep string) bool {
 	if env.ttyCols == 0 {
 		return false
 	}
-	used := 0
-	visible := 0
-	for _, seg := range row.Segments {
-		body := renderSegment(p, seg, env)
-		if body == "" {
-			continue
-		}
-		used += displayWidth(body)
-		visible++
-	}
-	if visible <= 1 {
-		return false
-	}
-	if powerlineActive {
-		used += (visible - 1) * powerlineSeparatorWidth
-	} else {
-		used += (visible - 1) * displayWidth(sep)
-	}
-	usable := env.ttyCols - 2*env.margin
-	if powerlineActive && row.Caps {
-		usable -= 2
-	}
-	return used > usable
+	m := measureRow(p, row, env, powerlineActive, sep)
+	return m.visible > 1 && m.used > m.usable
 }
 
 // splitWrap partitions row.Segments into a left group (segments
@@ -1019,16 +1026,19 @@ func expandWrappedRows(p *payload, rows []Row, env renderEnv, powerlineActive bo
 // Render parses raw, walks Config.Rows, and returns the joined multi-line
 // output. An empty Config.Rows triggers defaultConfig (rows plus
 // Powerline/PowerlineStyle/CapStyle so the out-of-the-box look matches
-// the documented default). A global JSON-parse failure falls back to a
-// hardcoded "<model> · <cwd>" so Claude Code never gets an empty
-// statusLine.
+// the documented default). A broken payload — global parse failure, a
+// per-field type error, or a missing critical field — never yields an
+// empty bar under the default layout: its schema_health segment renders
+// the "☠" marker whenever detectSchemaIssue fires, and when it does not
+// fire the model and cwd segments are guaranteed to have data. A
+// user-supplied config that intentionally renders empty stays empty.
 func Render(opts Options, raw []byte) (string, error) {
 	// Per-segment isolated parse: a type error in any one top-level
 	// field is contained — only that field's segment loses its data,
 	// the rest of the payload still renders. parseErrors carries both
 	// the top-level failure (if any) and the per-field failures so
 	// detectSchemaIssue can decide whether the indicator should fire.
-	p, parseErrs := parsePayload(raw)
+	p, parseErrs, _ := parsePayload(raw)
 	schemaIssue := detectSchemaIssue(&p, parseErrs)
 
 	cfg := opts.Config
@@ -1093,11 +1103,17 @@ func Render(opts Options, raw []byte) (string, error) {
 	// wrap-inserted row claims its own offset (= its output index
 	// times the stride) and continues the monotonic dark→light
 	// gradient instead of restarting at the parent row's offset.
+	//
+	// The offset is keyed to EMITTED rows, not configured ones: a row
+	// whose segments all render empty is dropped from the output, and
+	// counting it would leave a stride-sized hole in the gradient,
+	// breaking the "monotonic dark→light, no jumps" palette rule.
 	stride := cfg.effectivePaletteStride()
 	var lines []string
-	for outputIdx, row := range rows {
+	emitted := 0
+	for _, row := range rows {
 		rowEnv := env
-		rowEnv.paletteStart = outputIdx * stride
+		rowEnv.paletteStart = emitted * stride
 		row.Segments = applyShrink(&p, row, rowEnv, powerlineActive, sep)
 		var line string
 		switch {
@@ -1110,21 +1126,8 @@ func Render(opts Options, raw []byte) (string, error) {
 		}
 		if line != "" {
 			lines = append(lines, line)
+			emitted++
 		}
-	}
-	if len(lines) == 0 && usingDefault {
-		// Default layout produced nothing — e.g. `{}` payload where
-		// every default segment hides when its data is missing.
-		// Fall through to the last-resort line so the bar is never
-		// blank. A user-supplied config that intentionally renders
-		// empty stays empty. When the top-level parse failed, p is
-		// zero and we pass nil to opt back into the relaxed
-		// second-pass parse inside lastResort.
-		var lrPayload *payload
-		if parseErrs.topLevel == nil {
-			lrPayload = &p
-		}
-		return lastResort(opts, lrPayload, raw), nil
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -1159,8 +1162,8 @@ func renderRowNatural(p *payload, row Row, env renderEnv, sep string) string {
 	}
 
 	splitIdx := len(parts)
-	for i, p := range parts {
-		if p.align == "right" {
+	for i, part := range parts {
+		if part.align == "right" {
 			splitIdx = i
 			break
 		}
@@ -1170,8 +1173,8 @@ func renderRowNatural(p *payload, row Row, env renderEnv, sep string) string {
 
 	if splitIdx == len(parts) {
 		bodies := make([]string, len(parts))
-		for i, p := range parts {
-			bodies[i] = p.body
+		for i, part := range parts {
+			bodies[i] = part.body
 		}
 		return prefix + strings.Join(bodies, sep)
 	}
@@ -1496,7 +1499,7 @@ func collectVisibleSegments(p *payload, row Row, env renderEnv) []renderedSeg {
 		if s == "" {
 			continue
 		}
-		bg := effectiveSegmentBg(row, seg, len(visible), env.globalPalette, env.paletteStart, true)
+		bg := effectiveSegmentBg(row, seg, len(visible), env.globalPalette, env.paletteStart)
 		visible = append(visible, renderedSeg{body: s, bg: bg, align: seg.Align})
 	}
 	return visible
@@ -1597,66 +1600,22 @@ func writeRightCap(b *strings.Builder, caps capGlyphs, lastBg string) {
 
 // wrapPct conditionally wraps pctText in the threshold-chosen
 // foreground when Segment.ThresholdTarget == "pct" and a threshold
-// matches. The wrap closes back to the segment's static FG (or to
-// "\x1b[39m" terminal-default if the segment has no static FG) so
-// segment text outside the wrap continues in the surrounding color.
+// matches. It is the pct-specific adapter over wrapPart: the inner
+// colour is the threshold-resolved FG, the ambient colour to restore
+// is the segment's static FG.
 //
-// Returns pctText unchanged when ThresholdTarget is anything other
-// than "pct", when color is disabled, when no threshold matches, when
-// the threshold FG equals the segment's static FG, or when fg256
-// rejects the threshold FG value.
+// Returns pctText unchanged when ThresholdTarget is anything other than
+// "pct" or when color is disabled, and — via wrapPart — when no threshold
+// matches, when the threshold FG equals the segment's static FG, or when
+// fg256 rejects the threshold FG value.
+//
+// The colorEnabled check stays in the guard rather than being left to
+// wrapPart: chooseFG dereferences p for the metric-backed threshold types,
+// so short-circuiting first keeps the no-colour path free of any payload
+// access.
 func wrapPct(pctText string, s Segment, p *payload, colorEnabled bool) string {
-	if !colorEnabled || s.ThresholdTarget != "pct" {
+	if s.ThresholdTarget != "pct" || !colorEnabled {
 		return pctText
 	}
-	fg := chooseFG(s, p)
-	if fg == "" || fg == s.FG {
-		return pctText
-	}
-	openInner := fg256(fg)
-	if openInner == "" {
-		return pctText
-	}
-	closeInner := "\x1b[39m"
-	if reopen := fg256(s.FG); reopen != "" {
-		closeInner = reopen
-	}
-	return openInner + pctText + closeInner
-}
-
-// lastResort renders a single line from whatever fields we can salvage.
-// Called in two situations:
-//
-//   - Initial json.Unmarshal of raw failed. p is nil; we run a relaxed
-//     second-pass parse against raw to pick up flat strings.
-//   - Render produced no segments against the default layout (e.g. `{}`
-//     payload). p is the already-parsed payload from the main pass, so
-//     we reuse its fields instead of unmarshaling raw a second time.
-func lastResort(opts Options, p *payload, raw []byte) string {
-	var model, cwd string
-	if p != nil {
-		model = p.Model.DisplayName
-		cwd = p.Workspace.CurrentDir
-	} else {
-		var loose struct {
-			Model     modelF    `json:"model"`
-			Workspace workspace `json:"workspace"`
-		}
-		_ = json.Unmarshal(raw, &loose)
-		model = loose.Model.DisplayName
-		cwd = loose.Workspace.CurrentDir
-	}
-	if opts.Cwd != "" {
-		cwd = opts.Cwd
-	}
-	switch {
-	case model != "" && cwd != "":
-		return model + " · " + cwd
-	case model != "":
-		return model
-	case cwd != "":
-		return cwd
-	default:
-		return "claude-cli-status-bar"
-	}
+	return wrapPart(pctText, chooseFG(s, p), s.FG, colorEnabled)
 }

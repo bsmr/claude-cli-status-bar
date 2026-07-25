@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"time"
 )
@@ -33,7 +35,7 @@ func runConfigReset(p Paths, stdout io.Writer) error {
 		return fmt.Errorf("ccsb: config path is empty")
 	}
 	if _, err := os.Stat(p.Config); err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			fmt.Fprintf(stdout, "ccsb: no config at %s — defaults already apply\n", p.Config)
 			return nil
 		}

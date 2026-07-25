@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -160,6 +161,25 @@ func TestRenderGitDirty_StaleCacheStillRendersAndTriggersRefresh(t *testing.T) {
 	}
 }
 
+// TestRenderGitDirty_FutureDatedCacheIsStale covers the clock-skew lower
+// bound: an entry stamped in the future (backward clock step, NTP correction,
+// a cache copied from another host) yields a negative age that never reaches
+// the TTL. Without the guard it would be served until wall-clock time caught
+// up; with it the refresh fires and re-stamps the entry from this host's clock.
+func TestRenderGitDirty_FutureDatedCacheIsStale(t *testing.T) {
+	work, gitDir := dirtyRepo(t)
+	state := withDirtyCache(t, gitDir, 3, -time.Hour) // stamped one hour ahead
+	called := stubSpawn(t)
+
+	env := renderEnv{cwd: work, stateDir: state, nowUnix: nowFunc().Unix()}
+	if got := renderGitDirty(nil, Segment{}, env); got != "*3" {
+		t.Errorf("got %q, want *3", got)
+	}
+	if !*called {
+		t.Error("future-dated cache did not trigger a refresh")
+	}
+}
+
 func TestRenderGitDirty_NoCacheIsHiddenAndTriggersRefresh(t *testing.T) {
 	work, _ := dirtyRepo(t)
 	called := stubSpawn(t)
@@ -264,6 +284,37 @@ func TestRefreshGitDirty_RealRepository(t *testing.T) {
 	}
 	if cached.Count != 1 {
 		t.Errorf("count: got %d, want 1", cached.Count)
+	}
+}
+
+// TestRefreshGitDirty_GitFailureWritesNothing covers the error branch of
+// countDirty. dirtyRepo's .git holds only a HEAD file: nearestGitDir accepts
+// it, but `git status` rejects it (exit 128), so the failure propagates and
+// no cache entry is written — the segment keeps whatever it had.
+func TestRefreshGitDirty_GitFailureWritesNothing(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	work, _ := dirtyRepo(t)
+	state := t.TempDir()
+
+	if err := RefreshGitDirty(state, work); err == nil {
+		t.Fatal("a failing git status must propagate an error")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(state, "git-dirty")); len(entries) != 0 {
+		t.Errorf("wrote %d cache files although git failed", len(entries))
+	}
+}
+
+// TestDirtyStatusArgs_ClearsFsmonitor pins the hardening of the one git
+// invocation in ccsb. dir is payload-controlled, and `git status` honours the
+// target repository's .git/config — where core.fsmonitor names a program git
+// EXECUTES. Only a command-line -c (highest precedence) can neutralise it, so
+// the override must be present and must precede the subcommand.
+func TestDirtyStatusArgs_ClearsFsmonitor(t *testing.T) {
+	want := []string{"-c", "core.fsmonitor=", "-C", "/repo", "status", "--porcelain"}
+	if got := dirtyStatusArgs("/repo"); !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

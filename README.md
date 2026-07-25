@@ -125,11 +125,16 @@ ccsb uninstall    # restore the previous statusLine byte-for-byte
 ccsb help         # subcommand summary
 ```
 
+On the **first** install — while ccsb is not yet hooked and its config
+still holds no backup —
 `install` saves the existing `statusLine` value verbatim into ccsb's config
-as the backup and rewrites `statusLine.command` to the absolute path of the
-ccsb binary; other top-level keys in `settings.json` are preserved.
+as the backup and seeds the proxy command from the same value. Every
+install rewrites `statusLine.command` to the absolute path of the ccsb
+binary; other top-level keys in `settings.json` are preserved. Once a
+backup exists, a re-run leaves both the backup and the proxy block
+untouched — from then on the proxy block is managed with `ccsb mode`.
 
-If the existing entry matches the canonical
+On that first install, if the existing entry matches the canonical
 `npx -y ccstatusline@latest` invocation (a common predecessor — see
 [Background](#background)), `install` lands directly in native mode:
 the backup is preserved for `uninstall`, no proxy command is
@@ -175,6 +180,12 @@ previous `statusLine` value so `uninstall` can restore it. The `render`
 section and the full segment vocabulary are documented in
 [`docs/configuration.md`](docs/configuration.md).
 
+The capture directory is append-only and never pruned: every status update
+writes one to four files into it (`.json` always, plus `.out`, `.err` and `.diag`
+when non-empty), so it grows without bound. Only `ccsb doctor` ever reads a
+capture back, and only the newest one — deleting the directory, in whole or
+in part, is safe at any time.
+
 ## Roadmap
 
 - **0.1.x** — proxy mode, capture, install/uninstall machinery, the
@@ -189,8 +200,9 @@ section and the full segment vocabulary are documented in
   isolated parsing, `.diag` drift logger, `ccsb doctor` schema-check,
   persistent `schema_version` tracking), and a GoReleaser + GitHub
   Actions release pipeline (every `v*.*.*` tag builds the cross-platform
-  binaries and publishes a Release; every push or PR runs `go vet`,
-  `go test -race -cover`, and `gofmt`). **Feature-complete as of
+  binaries and publishes a Release; every push or PR runs `gofmt`,
+  `go vet`, a pinned `staticcheck`, `go test -race -cover`, and a
+  windows/darwin × amd64/arm64 cross-compile matrix). **Feature-complete as of
   `0.2.37` — subsequent `0.2.x` releases are bugfix-only.**
 - **0.3.x** — reserved for major new directions; not yet opened.
 
@@ -217,6 +229,7 @@ logging.
 ```bash
 go test -race -cover ./...   # all tests
 go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...   # version pinned, same as CI
 gofmt -l .                   # must be empty
 go build -o bin/ccsb ./cmd/ccsb
 ```

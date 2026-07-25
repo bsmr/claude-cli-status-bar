@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
@@ -59,16 +60,20 @@ type schemaCheckResult struct {
 	Note        string
 }
 
-// latestCaptureJSON returns the absolute path to the lexicographically
-// last *.json file in dir, which by capture.basename's RFC3339Nano
-// naming is also the chronologically latest. Returns "" when no
-// matching file exists or dir is unreadable.
+// latestCaptureJSON returns the absolute path to the chronologically
+// newest *.json file in dir. Capture names carry an RFC3339Nano UTC
+// timestamp (see capture.basename), whose fractional second is NOT fixed
+// width — the format trims trailing zeros, so ".1Z" sorts after ".10001Z"
+// lexicographically even though it is earlier. The timestamp is therefore
+// parsed and compared as a time.Time; files without one are ignored.
+// Returns "" when no such file exists or dir is unreadable.
 func latestCaptureJSON(dir string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
 	var latest string
+	var latestAt time.Time
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -77,14 +82,33 @@ func latestCaptureJSON(dir string) string {
 		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		if name > latest {
-			latest = name
+		at, ok := captureTime(name)
+		if !ok {
+			continue
+		}
+		if latest == "" || at.After(latestAt) {
+			latest, latestAt = name, at
 		}
 	}
 	if latest == "" {
 		return ""
 	}
 	return filepath.Join(dir, latest)
+}
+
+// captureTime parses the RFC3339Nano timestamp capture.basename puts in
+// front of the session id. The timestamp is always formatted in UTC, so
+// it ends at the first "Z" in the name.
+func captureTime(name string) (time.Time, bool) {
+	i := strings.IndexByte(name, 'Z')
+	if i < 0 {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, name[:i+1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // schemaCheck reads the most recent capture in captureDir, decodes

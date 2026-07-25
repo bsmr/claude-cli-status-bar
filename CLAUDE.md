@@ -21,7 +21,7 @@ cost, etc.), and renders the first line of stdout as the status bar.
 ### Operating modes
 
 - **Proxy mode** (no args, the path Claude Code invokes): read stdin once, capture the raw bytes to `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, then either forward the payload to a configured proxied statusLine command (its stdout becomes ours) or render a built-in fallback. The rendered output and any proxy stderr are captured alongside the input as `.out` and `.err` files sharing the same basename, so input and result can be paired by readers.
-- **`ccsb install`**: read the current `statusLine` from `~/.claude/settings.json`, save it verbatim to the ccsb config (`$XDG_CONFIG_HOME/ccsb/config.json`) under `backup.previous_status_line`, derive `proxy.command`/`proxy.args` from it via whitespace split, and replace `statusLine` with this binary's path. Idempotent; never overwrites an existing backup.
+- **`ccsb install`**: on the first install — while ccsb is not yet hooked and its config still holds no backup — read the current `statusLine` from `~/.claude/settings.json`, save it verbatim to the ccsb config (`$XDG_CONFIG_HOME/ccsb/config.json`) under `backup.previous_status_line`, and seed `proxy.command`/`proxy.args` from it via whitespace split. The proxy block stays empty when the entry is the canonical `npx -y ccstatusline@latest` or another ccsb binary, so install lands in native mode; the backup is preserved either way. Every install replaces `statusLine` with this binary's path. Idempotent; never overwrites an existing backup, and once a backup exists the proxy block is left alone and managed via `ccsb mode`.
 - **`ccsb uninstall`**: strict inverse — only proceeds if `statusLine` currently points at this binary. Restores the backup byte-for-byte (or removes the key if there was no prior).
 - **`ccsb status`**: prints `hooked: yes/no`, resolved paths, current proxy command, and current backup.
 
@@ -35,6 +35,7 @@ go build -o bin/ccsb -ldflags "-X go.muehmer.eu/claude-cli-status-bar/internal/p
 go test ./...                           # all tests
 go test -race -cover ./...              # with race detector and coverage
 go vet ./...                            # static checks
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...  # staticcheck (version pinned, same as CI)
 gofmt -l .                              # list mis-formatted files (must be empty)
 ```
 

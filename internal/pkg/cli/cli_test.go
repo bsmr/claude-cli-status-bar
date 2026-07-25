@@ -256,6 +256,91 @@ func TestInstall_IsIdempotentWhenAlreadyHookedAndDoesNotOverwriteBackup(t *testi
 	}
 }
 
+// A second install after settings.json was re-pointed elsewhere is NOT
+// alreadyHooked, so the backup guard cannot key on that flag: the very
+// first statusLine ccsb displaced must survive, otherwise uninstall
+// restores an intermediate command the user never chose.
+func TestInstall_KeepsOriginalBackupWhenSettingsWereRepointedExternally(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/original-statusline"}}`)
+
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install (1): %v", err)
+	}
+	first := e.loadConfig(t)
+	if len(first.Backup.PreviousStatusLine) == 0 {
+		t.Fatal("first install did not record a backup")
+	}
+
+	// Another tool (or the user) re-points statusLine at a third command.
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/third-tool"}}`)
+
+	buf.Reset()
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install (2): %v", err)
+	}
+	second := e.loadConfig(t)
+
+	if !bytes.Equal(first.Backup.PreviousStatusLine, second.Backup.PreviousStatusLine) {
+		t.Errorf("backup must survive a re-pointed settings.json:\n first=%s\nsecond=%s",
+			first.Backup.PreviousStatusLine, second.Backup.PreviousStatusLine)
+	}
+	// The proxy block is derived only alongside the backup, so it must not
+	// be re-seeded from the intermediate command either.
+	if second.Proxy.Command != first.Proxy.Command {
+		t.Errorf("proxy.command: got %q, want %q (unchanged)", second.Proxy.Command, first.Proxy.Command)
+	}
+}
+
+// Hidden refresh-git-dirty subcommand: the wiring the renderer's detached
+// refresher invokes. Exercised without a real repository — nearestGitDir is
+// pure filesystem walking, so every branch is reachable git-free.
+
+// assertNoDirtyCache fails when refresh-git-dirty wrote a cache under state.
+func assertNoDirtyCache(t *testing.T, state string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(state, "git-dirty")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected no git-dirty cache dir under %s (stat err: %v)", state, err)
+	}
+}
+
+func TestRun_RefreshGitDirty_WithoutDirArgIsANoop(t *testing.T) {
+	e := newEnv(t)
+	e.paths.State = t.TempDir()
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"refresh-git-dirty"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("refresh-git-dirty: %v", err)
+	}
+	if out.Len() != 0 || errOut.Len() != 0 {
+		t.Errorf("refresh-git-dirty must stay silent, got stdout=%q stderr=%q", out.String(), errOut.String())
+	}
+	assertNoDirtyCache(t, e.paths.State)
+}
+
+func TestRun_RefreshGitDirty_WithoutStateDirIsANoop(t *testing.T) {
+	e := newEnv(t) // Paths.State is empty
+
+	var out, errOut bytes.Buffer
+	err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"refresh-git-dirty", t.TempDir()}, nil, &out, &errOut)
+	if err != nil {
+		t.Fatalf("refresh-git-dirty: %v", err)
+	}
+}
+
+func TestRun_RefreshGitDirty_OutsideRepositoryWritesNothing(t *testing.T) {
+	e := newEnv(t)
+	e.paths.State = t.TempDir()
+
+	var out, errOut bytes.Buffer
+	err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"refresh-git-dirty", t.TempDir()}, nil, &out, &errOut)
+	if err != nil {
+		t.Fatalf("refresh-git-dirty: %v", err)
+	}
+	assertNoDirtyCache(t, e.paths.State)
+}
+
 // Uninstall.
 
 func TestUninstall_RestoresPreviousStatusLine(t *testing.T) {

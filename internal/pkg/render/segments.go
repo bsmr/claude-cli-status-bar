@@ -280,11 +280,6 @@ func makeBarGlyphs(pct float64, cells int, ramp []string) string {
 	return b.String()
 }
 
-// makeBar renders the default circle bar: makeBarGlyphs with circleSteps.
-func makeBar(pct float64, cells int) string {
-	return makeBarGlyphs(pct, cells, circleSteps)
-}
-
 // formatTokens compacts large numbers: 1234 → "1k", 273000 → "273k",
 // 1000000 → "1M", 1_500_000 → "1.5M".
 func formatTokens(n int64) string {
@@ -447,7 +442,14 @@ func renderGitDirty(_ *payload, s Segment, env renderEnv) string {
 	}
 
 	cached, found := readDirtyCache(DirtyCachePath(env.stateDir, gitDir))
-	if !found || env.nowUnix-cached.Unix >= int64(dirtyCacheTTL.Seconds()) {
+	// A negative age means the entry is stamped in the future — a backward
+	// clock step, an NTP correction, or a cache copied from another host.
+	// Without the lower bound such an entry would never reach the TTL and
+	// would be served until wall-clock time caught up; treating it as stale
+	// refreshes it, and the refresher's write re-stamps it with this host's
+	// clock, so the entry self-heals in one cycle.
+	age := env.nowUnix - cached.Unix
+	if !found || age < 0 || age >= int64(dirtyCacheTTL.Seconds()) {
 		// Single-flight: only the caller that wins the lock spawns a
 		// refresher. This function is invoked several times per render (the
 		// layout engine's measurement passes) and by every parallel session

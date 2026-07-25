@@ -1,8 +1,10 @@
 name: ci
 
 # Runs on every push to main/development-* and on every PR targeting
-# main. Three gates: gofmt cleanliness, go vet, and the test suite
-# with race + cover. Matches the local "Develop" block in the README.
+# main. Gates: gofmt cleanliness, go vet, staticcheck, the test suite
+# with race + cover, and a cross-compile matrix so the windows/darwin
+# build tags are exercised before goreleaser hits them at tag time.
+# Matches the local "Develop" block in the README.
 on:
   push:
     branches:
@@ -37,5 +39,46 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Run from the module cache without adding a tool dependency to
+      # go.mod: `go run pkg@version` is module-aware but leaves the
+      # current module's go.mod/go.sum untouched. The version is pinned
+      # for reproducibility — with `@latest` a new staticcheck release
+      # can red the pipeline on an untouched tree. No config file — the
+      # default check set is deliberately all this project gates on.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+
       - name: go test
         run: go test -race -cover ./...
+
+  # Compilation only, no tests: enough to catch build-tag and stub
+  # signature drift in the //go:build windows path (which the host-only
+  # test job never compiles) before goreleaser cross-builds at tag time.
+  cross-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [windows, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: go build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+      - name: go vet
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go vet ./...

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
@@ -131,6 +132,16 @@ func TestRemoveStatusLine_DeletesKey(t *testing.T) {
 	}
 	if _, ok := s["theme"]; !ok {
 		t.Error("expected unrelated key to remain")
+	}
+}
+
+func TestSave_EmptyPathReturnsError(t *testing.T) {
+	err := claudesettings.Save("", claudesettings.Settings{})
+	if err == nil {
+		t.Fatal("expected error for empty path")
+	}
+	if !strings.Contains(err.Error(), "empty path") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

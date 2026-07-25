@@ -61,12 +61,14 @@ out-of-the-box look does not depend on a config file. See
 
 A row whose segments all render to empty strings is omitted from the
 output; the next row moves up. Empty segments inside a row are dropped
-before joining, so adjacent separators are never doubled. When the
-default layout produces no segments at all (e.g. a `{}` payload), the
-renderer falls through to the [last-resort fallback](#last-resort-fallback)
-so the bar is never blank. A user-supplied `rows` that intentionally
-renders empty stays empty — the fallback is reserved for the default
-layout.
+before joining, so adjacent separators are never doubled. Under the
+default layout the bar is never blank, not even for a broken payload
+(`{}`, a global parse failure, a per-field type error): the layout's
+[`schema_health`](#schema_health) segment renders the `☠` marker
+whenever the detection fires, and when it does not fire the `model`
+and `cwd` segments are guaranteed to carry data. A user-supplied `rows`
+that intentionally renders empty stays empty — the guarantee covers the
+default layout only.
 
 ### Row shape
 
@@ -127,13 +129,6 @@ order: explicit `Segment.bg` > `Row.palette` rotation > `Row.bg`
 greys (`["234", "236", "238"]`, applied only when Powerline is
 enabled). If all four are unset and Powerline is off, the segment
 has no background.
-
-### Last-resort fallback
-
-If the JSON payload from Claude Code is unparsable, ccsb emits a single
-`<model> · <cwd>` line (or just one of the two, or the literal
-`claude-cli-status-bar`) so the status bar is never blank. Configuration
-does not affect this path.
 
 ### Powerline
 
@@ -298,7 +293,7 @@ segment functions, so they apply to every type:
 | `align` | string  | `"right"` anchors this segment (and every later segment in the same row) to the right edge of the usable width. The slack between the preceding left group and the first right-aligned segment becomes padding; in Powerline mode that padding inherits the bg of the last left-aligned visible segment so the streak stays continuous. Degrades to inline (no padding) when terminal width is unknown or the row already overflows. Unknown values are treated as left (the default). Distinct from `Row.align="right"`, which forces the whole row right and bypasses Powerline. |
 | `wrap`  | bool    | When true, marks the segment as eligible for row-overflow reflow. If the containing row's visible content exceeds the usable width (`ttyCols - 2*margin` minus cap columns when active), every `wrap: true` segment is pulled out and joined into a new row inserted directly after the original. The new row inherits the parent row's `bg` / `palette` / `caps` / Powerline mode; palette rotation restarts at index 0. Reflow degrades to a no-op (segments stay inline) when `ttyCols` is unknown or the row already fits. In the default layout `limit_5h` and `limit_7d` carry this flag so a narrow terminal automatically lifts them onto their own line. |
 | `max_width` | int | When positive, caps the visible column width of the segment's rendered body. Longer bodies are shortened to `max_width − 1` columns and suffixed with `…` (U+2026); shorter bodies pass through unchanged. Zero (the default) disables truncation. Truncation runs on the segment's **plain** body before the style wrap, so it is safe for text-only segments (`text`, `cwd`, `git_branch`, `model`, …). Segments that self-embed ANSI escapes for sub-styling (`context`, `limit_5h`, `limit_7d` when `threshold_target: "pct"`, or when any of `bar_fg` / `bar_thresholds` / `label_fg` / `label_thresholds` is set) should leave `max_width` at 0 — truncating across an embedded escape can leave the terminal in an unintended SGR state. |
-| `min_cols` | int | When positive, suppresses the segment when the detected terminal width is strictly narrower than `min_cols`. The hidden segment behaves like an empty render: no body, no chevron, no palette slot. The gate runs before the segment function fires, so hidden segments cost nothing. When the terminal width is unknown (`ttyCols == 0`, e.g. no `/dev/tty`, no `/proc` walk hit, no `Config.Width` override) the gate is bypassed — "no info to gate on" defaults to "keep the segment". Zero (the default) disables the gate. Pairs naturally with [`max_width`](#) and [`wrap`](#) to build layouts that gracefully shed segments as the terminal narrows. |
+| `min_cols` | int | When positive, suppresses the segment when the detected terminal width is strictly narrower than `min_cols`. The hidden segment behaves like an empty render: no body, no chevron, no palette slot. The gate runs before the segment function fires, so hidden segments cost nothing. When the terminal width is unknown (`ttyCols == 0`, e.g. no `/dev/tty`, no `/proc` walk hit, no `Config.Width` override) the gate is bypassed — "no info to gate on" defaults to "keep the segment". Zero (the default) disables the gate. Pairs naturally with `max_width` and `wrap` (both above) to build layouts that gracefully shed segments as the terminal narrows. |
 | `shrink` | bool | When true, marks the segment as the one that yields display width when its row would overflow. After reflow, a pre-pass measures the row; if the visible content exceeds the usable width (`ttyCols - 2*margin` minus cap columns when active), every `shrink: true` segment has its effective `max_width` lowered — in row order, each yielding down to a 1-column floor (the `…` glyph) — until the overflow is absorbed. The cut reuses the `max_width` path, so `shrink` is the **dynamic** counterpart to that **static** cap and is safe on the same text-only segments (`text`, `cwd`, `git_branch`, `model`, …). A user-set `max_width` is only ever lowered further, never raised. A no-op when `ttyCols` is unknown or the row already fits. In the default layout `cwd` carries this flag so the right-aligned `version` stamp stays intact on narrow terminals. |
 
 Per-segment additional fields are documented under each type below.
@@ -746,6 +741,14 @@ the top-level parse error if any, missing critical fields, per-field
 unmarshal errors, and the list of additive keys spotted on the side.
 Healthy captures produce no `.diag` file, so the capture dir stays
 uncluttered.
+
+The capture directory itself is never pruned. Every status update writes
+one to four files (`.json` always, plus `.out`, `.err` and `.diag` when
+non-empty) into
+`${XDG_STATE_HOME:-$HOME/.local/state}/ccsb/captures/`, and nothing
+removes them again, so the directory grows without bound. Only
+`ccsb doctor` ever reads a capture back, and only the newest one —
+deleting the directory, in whole or in part, is safe at any time.
 
 ccsb also remembers the last `schema_version` value the upstream
 payload reported in `$XDG_STATE_HOME/ccsb/schema_version` (sibling

@@ -6,6 +6,13 @@ import (
 	"testing"
 )
 
+// branch is the default-scope shorthand used by the tests below: production
+// code always passes Segment.Scope through to branchScoped (segments.go), so
+// this shorthand lives here rather than in git.go.
+func branch(start string) string {
+	return branchScoped(start, "local")
+}
+
 func TestBranch_RegularRepoOnMain(t *testing.T) {
 	dir := t.TempDir()
 	mustMkdir(t, filepath.Join(dir, ".git"))

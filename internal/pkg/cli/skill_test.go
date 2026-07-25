@@ -30,7 +30,7 @@ func wizardTableTypes(t *testing.T, asset string) []string {
 		t.Fatalf("wizard table markers not found (start=%d end=%d)", start, end)
 	}
 	var types []string
-	for _, line := range strings.Split(asset[start:end], "\n") {
+	for line := range strings.SplitSeq(asset[start:end], "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "| `") {
 			continue // not a table data row
@@ -99,6 +99,29 @@ func TestRun_InstallSkill_CreatesFileAndDir(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "installed") {
 		t.Errorf("expected 'installed' in output, got %q", out.String())
+	}
+	// The write goes through fileutil.WriteAtomic like every other
+	// persistent writer: user-private perms and no temp file left behind.
+	fi, err := os.Stat(dest)
+	if err != nil {
+		t.Fatalf("stat skill file: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("skill file perm: got %o, want 600", got)
+	}
+	di, err := os.Stat(e.paths.ClaudeSkillsDir)
+	if err != nil {
+		t.Fatalf("stat skills dir: %v", err)
+	}
+	if got := di.Mode().Perm(); got != 0o700 {
+		t.Errorf("skills dir perm: got %o, want 700", got)
+	}
+	entries, err := os.ReadDir(e.paths.ClaudeSkillsDir)
+	if err != nil {
+		t.Fatalf("read skills dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected only ccsb-wizard.md in the skills dir, got %d entries", len(entries))
 	}
 }
 

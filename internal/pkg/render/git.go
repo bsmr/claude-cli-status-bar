@@ -13,12 +13,6 @@ const (
 	maxWalkDepth = 30
 )
 
-// branch returns the current branch name for the nearest repository, walking
-// up from start. Equivalent to branchScoped(start, "local").
-func branch(start string) string {
-	return branchScoped(start, "local")
-}
-
 // branchScoped returns the current branch name, walking up from start until it
 // finds a .git directory or .git pointer file. Returns "" for: empty start,
 // not in a repo, detached HEAD, malformed HEAD, or I/O error.

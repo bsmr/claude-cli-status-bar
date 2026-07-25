@@ -22,22 +22,22 @@ func TestLatestCaptureJSON_MissingDir(t *testing.T) {
 
 func TestLatestCaptureJSON_NoMatchingFiles(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "x.out"), []byte("x"), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "x.err"), []byte("x"), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
+	// Neither the paired capture outputs, a foreign .json without a
+	// capture timestamp, nor a name whose leading "…Z" is not a valid
+	// RFC3339Nano stamp may be picked up.
+	for _, n := range []string{"x.out", "x.err", "notes.json", "2026-13-45T99:99:99Z-x.json"} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
+			t.Fatalf("setup %s: %v", n, err)
+		}
 	}
 	if got := latestCaptureJSON(dir); got != "" {
-		t.Errorf("dir without .json should return empty, got %q", got)
+		t.Errorf("dir without a timestamped .json should return empty, got %q", got)
 	}
 }
 
-func TestLatestCaptureJSON_PicksLexicographicallyLast(t *testing.T) {
+func TestLatestCaptureJSON_PicksChronologicallyLatest(t *testing.T) {
 	dir := t.TempDir()
-	// Names follow capture.basename: <RFC3339Nano>-<id>.json, which
-	// sorts lex-monotonic with time. Spot-check that the latest by
-	// lex wins.
+	// Names follow capture.basename: <RFC3339Nano>-<id>.json.
 	names := []string{
 		"2026-05-10T10:00:00Z-aaa.json",
 		"2026-05-12T09:00:00Z-bbb.json",
@@ -50,6 +50,28 @@ func TestLatestCaptureJSON_PicksLexicographicallyLast(t *testing.T) {
 	}
 	got := latestCaptureJSON(dir)
 	want := filepath.Join(dir, "2026-05-12T09:00:00Z-bbb.json")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// RFC3339Nano trims trailing zeros from the fractional second, so capture
+// names are not fixed width and lexicographic order is not chronological:
+// ".1Z" (100ms) sorts after ".10001Z" (100.01ms) because 'Z' > '0'.
+func TestLatestCaptureJSON_SameSecondDifferentNanoWidths(t *testing.T) {
+	dir := t.TempDir()
+	older := "2026-05-26T12:00:00.1Z-aaa.json"
+	newer := "2026-05-26T12:00:00.10001Z-bbb.json"
+	for _, n := range []string{older, newer} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(`{}`), 0o600); err != nil {
+			t.Fatalf("setup %s: %v", n, err)
+		}
+	}
+	if !(older > newer) {
+		t.Fatal("premise broken: the older name no longer sorts last")
+	}
+	got := latestCaptureJSON(dir)
+	want := filepath.Join(dir, newer)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
