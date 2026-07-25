@@ -10,10 +10,11 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.0` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.4` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
-> `git_dirty` segment). The native renderer is the
+> `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb).
+> The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
 > rate-limit bars + git branch + lines diff + cwd + version stamp +
@@ -106,11 +107,12 @@ go install go.muehmer.eu/claude-cli-status-bar/cmd/ccsb@vX.Y.Z   # or @latest
 ```
 
 The version segment reads its string from `runtime/debug.ReadBuildInfo()`:
-a binary built from a checked-out tag reports that tag (`v0.2.14`), an
-untagged commit reports `(devel)`. Check out the tag you want shipped if
-you care about the version stamp.
+a binary built from a checked-out tag reports that tag (`v0.4.4`). An
+untagged build reports `dev` — Go's `(devel)` placeholder is discarded —
+and the `version` segment then renders a skull marker instead of a
+version. Check out the tag you want shipped if you care about the stamp.
 
-Requires Go 1.26 or newer.
+Requires Go 1.26.3 or newer (see `go.mod`).
 
 ## Use
 
@@ -120,9 +122,15 @@ ccsb mode         # print current mode (native or proxy)
 ccsb mode native  # clear proxy block so the native renderer drives ccsb
 ccsb mode proxy   # restore proxy mode (default: npx -y ccstatusline@latest)
 ccsb config reset # move config.json aside (timestamped backup); defaults apply
+ccsb captures clean               # remove captured payloads and output
+ccsb captures clean --older-than 7d  # ... keeping anything newer
 ccsb status       # print resolved paths, hook state, mode, proxy/backup
+ccsb doctor       # diagnose and auto-fix install/proxy problems, check schema drift
+ccsb install-skill   # install the ccsb-wizard configuration skill
+ccsb uninstall-skill # remove it again
 ccsb uninstall    # restore the previous statusLine byte-for-byte
-ccsb help         # subcommand summary
+ccsb version      # print the version (aliases: -v, --version)
+ccsb help         # subcommand summary (aliases: -h, --help)
 ```
 
 On the **first** install — while ccsb is not yet hooked and its config
@@ -210,10 +218,21 @@ a name that does not start with one.
   persistent `schema_version` tracking), and a GoReleaser + GitHub
   Actions release pipeline (every `v*.*.*` tag builds the cross-platform
   binaries and publishes a Release; every push or PR runs `gofmt`,
-  `go vet`, a pinned `staticcheck`, `go test -race -cover`, and a
-  windows/darwin × amd64/arm64 cross-compile matrix). **Feature-complete as of
+  `go vet` and `go test -race -cover`). **Feature-complete as of
   `0.2.37` — subsequent `0.2.x` releases are bugfix-only.**
-- **0.3.x** — reserved for major new directions; not yet opened.
+- **0.3.x** — the `ccsb-wizard` Claude Code skill: an opt-in, AI-guided
+  configuration dialogue installed with `ccsb install-skill` and started
+  with `/ccsb-wizard` inside Claude Code.
+- **0.4.x** — render options contributed from real-world use: configurable
+  bar glyphs (`bar_glyphs` / `bar_style`), independent colour for a bar and
+  its label (`bar_fg` / `label_fg` with their own thresholds), placement of
+  the token fraction (`token_position`), and an opt-in `git_dirty` segment
+  that keeps the render path free of blocking git calls by refreshing a
+  cached count out of band. `0.4.3` acted on a full-codebase review — dead
+  code removed, an install-backup bug fixed, the background `git status`
+  hardened, and CI extended with a pinned `staticcheck` plus a
+  windows/darwin cross-compile matrix. `0.4.4` added `ccsb captures clean`
+  so the capture directory no longer grows without bound.
 
 ## Background
 

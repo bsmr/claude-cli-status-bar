@@ -320,7 +320,8 @@ Subcommands:
   config      "config reset" moves the existing config.json aside (as a
               timestamped .bak file) so the next run picks up the in-code
               defaults. The only verb today; a no-op when no config exists.
-  captures    "captures clean" removes captured payloads and rendered output.
+  captures    "captures clean" removes capture files (.json payloads, .out
+              rendered output, plus any .err and .diag siblings).
               Without arguments it empties the capture directory; with
               --older-than <duration> it keeps anything newer (e.g. 7d, 24h).
               Captures are diagnostic only and safe to remove at any time.
@@ -333,7 +334,7 @@ Subcommands:
               Re-run after updating ccsb to get the latest skill version.
   uninstall-skill Remove ccsb-wizard.md from ~/.claude/skills/.
   version     Print the ccsb version. Aliases: -v, --version.
-  help        Print this message.
+  help        Print this message. Aliases: -h, --help.
 `
 	fmt.Fprint(w, help)
 }

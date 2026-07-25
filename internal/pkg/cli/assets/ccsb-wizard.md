@@ -73,7 +73,7 @@ Available segment types:
 | `output_style` | Output style name | `style: concise` |
 | `tty_size` | Terminal size (cols × rows) | `128×37` |
 | `schema_health` | Payload-schema warning (hidden unless broken) | `☠` |
-| `version` | ccsb binary version | `v0.4.0` |
+| `version` | ccsb binary version | `v0.4.4` |
 | `text` | Static label | any string |
 
 Each segment accepts:
