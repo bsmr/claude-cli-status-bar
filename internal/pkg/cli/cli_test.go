@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/cli"
@@ -767,5 +768,39 @@ func TestDoctor_InstallsWhenNotHooked(t *testing.T) {
 	}
 	if obj.Command != e.paths.Self {
 		t.Errorf("after doctor: statusLine command = %q, want %q", obj.Command, e.paths.Self)
+	}
+}
+
+func TestRun_CapturesCleanIsDispatched(t *testing.T) {
+	e := newEnv(t)
+	if err := os.MkdirAll(e.paths.Capture, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	name := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano) + "-sess.json"
+	if err := os.WriteFile(filepath.Join(e.paths.Capture, name), []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"captures", "clean"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, err := os.ReadDir(e.paths.Capture)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("capture not removed via dispatch: %v", entries)
+	}
+}
+
+func TestRun_HelpMentionsCapturesVerb(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), cli.Paths{}, cli.Flags{}, []string{"help"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out.String(), "captures") {
+		t.Errorf("help should document the captures verb:\n%s", out.String())
 	}
 }

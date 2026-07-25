@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/capture"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
@@ -82,7 +83,7 @@ func latestCaptureJSON(dir string) string {
 		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		at, ok := captureTime(name)
+		at, ok := capture.TimeFromName(name)
 		if !ok {
 			continue
 		}
@@ -94,21 +95,6 @@ func latestCaptureJSON(dir string) string {
 		return ""
 	}
 	return filepath.Join(dir, latest)
-}
-
-// captureTime parses the RFC3339Nano timestamp capture.basename puts in
-// front of the session id. The timestamp is always formatted in UTC, so
-// it ends at the first "Z" in the name.
-func captureTime(name string) (time.Time, bool) {
-	i := strings.IndexByte(name, 'Z')
-	if i < 0 {
-		return time.Time{}, false
-	}
-	t, err := time.Parse(time.RFC3339Nano, name[:i+1])
-	if err != nil {
-		return time.Time{}, false
-	}
-	return t, true
 }
 
 // schemaCheck reads the most recent capture in captureDir, decodes

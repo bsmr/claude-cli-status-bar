@@ -742,13 +742,33 @@ unmarshal errors, and the list of additive keys spotted on the side.
 Healthy captures produce no `.diag` file, so the capture dir stays
 uncluttered.
 
-The capture directory itself is never pruned. Every status update writes
-one to four files (`.json` always, plus `.out`, `.err` and `.diag` when
-non-empty) into
-`${XDG_STATE_HOME:-$HOME/.local/state}/ccsb/captures/`, and nothing
-removes them again, so the directory grows without bound. Only
-`ccsb doctor` ever reads a capture back, and only the newest one —
-deleting the directory, in whole or in part, is safe at any time.
+Nothing prunes the capture directory automatically. Every status update
+writes one to four files (`.json` always, plus `.out`, `.err` and `.diag`
+when non-empty) into
+`${XDG_STATE_HOME:-$HOME/.local/state}/ccsb/captures/`, so it grows until
+you clear it. Only `ccsb doctor` ever reads a capture back, and only the
+newest one — removing the rest is safe at any time:
+
+```bash
+ccsb captures clean                     # remove all captures
+ccsb captures clean --older-than 7d     # keep anything newer than 7 days
+```
+
+`--older-than` accepts a day count (`7d`, `90d`, up to `106751d`) or any Go
+duration (`24h`, `90m`, `1h30m`). The age comes from the RFC3339Nano
+timestamp in each filename, not from the filesystem, so touching a file does
+not make it look fresh.
+
+Only names that *start* with such a timestamp are candidates; everything
+else — `notes.txt`, a `README`, any subdirectory — is left alone. Note the
+converse: a file you name with a leading timestamp is indistinguishable from
+a capture and will be removed, so park your own files under a different name
+or elsewhere. Symlinks are unlinked, never followed, so a link pointing out
+of the directory cannot delete its target.
+
+A run that hits an unremovable file stops, reports how many it removed
+before stopping, and exits non-zero; re-running after fixing the cause
+resumes where it left off.
 
 ccsb also remembers the last `schema_version` value the upstream
 payload reported in `$XDG_STATE_HOME/ccsb/schema_version` (sibling

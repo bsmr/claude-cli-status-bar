@@ -24,8 +24,9 @@ cost, etc.), and renders the first line of stdout as the status bar.
 - **`ccsb install`**: on the first install — while ccsb is not yet hooked and its config still holds no backup — read the current `statusLine` from `~/.claude/settings.json`, save it verbatim to the ccsb config (`$XDG_CONFIG_HOME/ccsb/config.json`) under `backup.previous_status_line`, and seed `proxy.command`/`proxy.args` from it via whitespace split. The proxy block stays empty when the entry is the canonical `npx -y ccstatusline@latest` or another ccsb binary, so install lands in native mode; the backup is preserved either way. Every install replaces `statusLine` with this binary's path. Idempotent; never overwrites an existing backup, and once a backup exists the proxy block is left alone and managed via `ccsb mode`.
 - **`ccsb uninstall`**: strict inverse — only proceeds if `statusLine` currently points at this binary. Restores the backup byte-for-byte (or removes the key if there was no prior).
 - **`ccsb status`**: prints `hooked: yes/no`, resolved paths, current proxy command, and current backup.
+- **`ccsb captures clean [--older-than <duration>]`**: removes capture files. Without arguments the cutoff is `time.Now()`, so everything goes — "remove all" is not a separate code path. `--older-than` accepts a day count (`7d`) or any Go duration (`24h`); `time.ParseDuration` has no day unit, so a trailing `d` is converted to hours in `parseRetention`. Age comes from the RFC3339Nano basename, never from `stat`. Files without a parsable timestamp and all subdirectories are left alone.
 
-The capture path exists primarily to inspect what Claude Code actually sends, so a future built-in renderer can be validated against the real input rather than guessed at.
+The capture path exists primarily to inspect what Claude Code actually sends, so a future built-in renderer can be validated against the real input rather than guessed at. Nothing prunes it automatically — `ccsb captures clean` is the manual escape hatch, deliberately kept out of the render hot path.
 
 ## Build & Test Commands
 

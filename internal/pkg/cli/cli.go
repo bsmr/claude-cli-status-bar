@@ -92,7 +92,7 @@ type UnknownSubcommandError struct {
 }
 
 func (e *UnknownSubcommandError) Error() string {
-	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, config, doctor, install-skill, uninstall-skill, version, help)", e.Name)
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, config, captures, doctor, install-skill, uninstall-skill, version, help)", e.Name)
 }
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
@@ -118,6 +118,8 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runMode(p, args[1:], stdout)
 	case "config":
 		return runConfig(p, args[1:], stdout)
+	case "captures":
+		return runCaptures(p, args[1:], stdout)
 	case "doctor":
 		return runDoctor(p, stdout)
 	case "refresh-git-dirty":
@@ -318,6 +320,10 @@ Subcommands:
   config      "config reset" moves the existing config.json aside (as a
               timestamped .bak file) so the next run picks up the in-code
               defaults. The only verb today; a no-op when no config exists.
+  captures    "captures clean" removes captured payloads and rendered output.
+              Without arguments it empties the capture directory; with
+              --older-than <duration> it keeps anything newer (e.g. 7d, 24h).
+              Captures are diagnostic only and safe to remove at any time.
   doctor      Diagnose and auto-fix configuration problems: re-installs if
               settings.json is not hooked; switches to native mode if the
               proxy command is circular, another ccsb binary, or missing.
