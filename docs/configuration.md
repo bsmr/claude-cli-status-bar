@@ -125,10 +125,10 @@ documented as the [`align` common field](#common-fields).
 
 The effective background of each segment is resolved in priority
 order: explicit `Segment.bg` > `Row.palette` rotation > `Row.bg`
-(uniform fill) > built-in `defaultPalette` of three subtle dark
-greys (`["234", "236", "238"]`, applied only when Powerline is
-enabled). If all four are unset and Powerline is off, the segment
-has no background.
+(uniform fill) > the shared `render.palette`, which defaults to nine
+monotonic dark→light greys (`232`–`240`) rotated per output row by
+`palette_stride` and applied only when Powerline is enabled. If all
+four are unset and Powerline is off, the segment has no background.
 
 ### Powerline
 
@@ -277,7 +277,7 @@ Unknown `cap_style` values fall back to `"round"`.
 ## Segments
 
 Every segment is an object with at least a `type` field. The renderer
-recognises 17 types.
+recognises 18 types.
 
 ### Common fields
 
@@ -302,7 +302,7 @@ Per-segment additional fields are documented under each type below.
 
 | Field           | Used by                              | Notes                                                |
 | --------------- | ------------------------------------ | ---------------------------------------------------- |
-| `label`         | `text`, `effort`, `output_style`, `git_branch`, `git_dirty`, `limit_5h`, `limit_7d` | Overrides each segment's default label prefix. |
+| `label`         | `text`, `effort`, `output_style`, `git_branch`, `git_dirty`, `limit_5h`, `limit_7d`, `tty_size` | Overrides each segment's default label prefix. |
 | `format`        | `cwd`, `cost`, `git_dirty`, `tty_size` | Per-type format string or shape selector.          |
 | `show_1m_flag`  | `model`                              | Appends `" 1M"` when the payload's `exceeds_200k_tokens` is true. |
 | `style`         | `context`, `limit_5h`, `limit_7d`    | Selects between presentation variants.               |
@@ -370,7 +370,7 @@ The optional `threshold_target` field scopes the override:
  ]}
 ```
 
-In this configuration the bar `[██░░░░░░░░░░░░░░]` stays in `245`
+In this configuration the bar `●●○○○○○○○○○○○○○○` stays in `245`
 (grey) regardless of fill; only the `95%` flicks to `160` (red)
 above the 90 threshold.
 
@@ -522,9 +522,13 @@ clock at the time of the call.
 
 | `style`     | Output                                         |
 | ----------- | ---------------------------------------------- |
-| `""` / `"pct"` | `5h: 18% (2h15m)` (default)                 |
-| `"bar"`     | `5h: [███░░░░░░░░░░░░░]`                        |
-| `"bar+pct"` | `5h: [███░░░░░░░░░░░░░] 18% (2h15m)`            |
+| `""` / `"pct"` | `5h: 18% · 2h15m` (default)                 |
+| `"bar"`     | `5h: ●●●○○○○○○○○○○○○○`                          |
+| `"bar+pct"` | `5h: ●●●○○○○○○○○○○○○○ 18% · 2h15m`              |
+
+The countdown is joined with `" · "`, not wrapped in parentheses, and the
+bar uses the same circle ramp as `context` (`○◔◑◕●`) — see
+[`bar_glyphs` / `bar_style`](#bar_width) to switch it to blocks.
 
 Countdown format mirrors `duration`: drop zero higher units, keep at most
 two adjacent units (`"4d1h"`, `"2h15m"`, `"45m"`). Reaches `"now"` once the
@@ -847,7 +851,7 @@ Output (ANSI stripped, valid payload — `schema_health` is hidden):
 
 ```
   Opus 4.7 1M  🧠  ●●●◑○○○○○○○○○○○○ 22% 217k/1M  5h: ◔○○○○○○○ 5% · 4h25m  7d: ◔○○○○○○○ 5% · 6d2h
-  main  +546 −107  claude-cli-status-bar                                                                          v0.2.37
+  main  +546 −107  claude-cli-status-bar                                                                          v0.4.4
 ```
 
 If the inbound JSON payload from Claude Code looks broken (top-level

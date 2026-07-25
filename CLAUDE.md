@@ -15,7 +15,7 @@ cost, etc.), and renders the first line of stdout as the status bar.
 
 - **Module**: `go.muehmer.eu/claude-cli-status-bar`
 - **Binary**: `ccsb` (short form — used in users' `~/.claude/settings.json` `statusLine.command`).
-- **Runtime contract**: read JSON from stdin, write a single line to stdout, exit 0. Errors go to stderr; non-zero exit makes Claude Code fall back silently.
+- **Runtime contract**: read JSON from stdin, write the rendered status bar to stdout, exit 0. Claude Code renders every line it receives, and the default layout emits two rows — the "single line" of the original 0.1.x contract no longer holds. Errors go to stderr; non-zero exit makes Claude Code fall back silently.
 - **Performance**: Claude Code calls the binary on every status update — startup must be fast (< ~100 ms). Avoid heavy init, network calls in the hot path, or large dependencies.
 
 ### Operating modes
@@ -31,7 +31,7 @@ The capture path exists primarily to inspect what Claude Code actually sends, so
 ## Build & Test Commands
 
 ```bash
-go build -o bin/ccsb ./cmd/ccsb        # build (output MUST go to bin/; version defaults to "dev")
+go build -o bin/ccsb ./cmd/ccsb        # build (output MUST go to bin/; version comes from ReadBuildInfo — "dev" only off-tag)
 go build -o bin/ccsb -ldflags "-X go.muehmer.eu/claude-cli-status-bar/internal/pkg/cli.Version=X.Y.Z" ./cmd/ccsb  # versioned build
 go test ./...                           # all tests
 go test -race -cover ./...              # with race detector and coverage
@@ -68,15 +68,22 @@ claude-cli-status-bar/
 │       └── main.go                 # entry point — wiring only; resolves env paths, calls cli.Run
 ├── internal/
 │   └── pkg/
-│       ├── cli/                    # subcommand dispatcher (install / uninstall / status / help)
+│       ├── cli/                    # subcommand dispatcher (install / uninstall / status / mode /
+│       │                             config / captures / doctor / install-skill / uninstall-skill /
+│       │                             version / help, plus the internal refresh-git-dirty helper)
 │       │                             and the no-args proxy-mode entry point
-│       ├── statusline/             # stdin → memory → capture (best effort) → proxy or fallback render
+│       ├── render/                 # the native renderer: payload parsing, the segment registry,
+│       │                             Powerline rows, palettes, reflow/shrink, terminal-size
+│       │                             detection, schema diagnostics, git branch/dirty lookups
+│       ├── statusline/             # stdin → memory → capture (best effort) → proxy or native render
 │       ├── proxy/                  # exec.CommandContext wrapper: pipes payload to child stdin,
 │       │                             streams stdout/stderr through, propagates *exec.ExitError
-│       ├── capture/                # one-file-per-invocation writer with atomic temp+rename
-│       │                             plus DefaultDir resolution from XDG_STATE_HOME
+│       ├── capture/                # one-file-per-invocation writer with atomic temp+rename,
+│       │                             DefaultDir resolution from XDG_STATE_HOME, and Prune
+│       ├── fileutil/               # WriteAtomic — the temp+rename writer every persistent
+│       │                             write in the project goes through (0o700 dir / 0o600 file)
 │       ├── config/                 # JSON config at $XDG_CONFIG_HOME/ccsb/config.json
-│       │                             (proxy command/args + verbatim statusLine backup)
+│       │                             (proxy command/args + render config + statusLine backup)
 │       └── claudesettings/         # ~/.claude/settings.json read/write preserving unknown keys
 │                                     via map[string]json.RawMessage
 ├── bin/                            # build output (gitignored)
@@ -110,7 +117,7 @@ Notes on the tee path:
 
 - `errIgnoringWriter` swallows write errors from real stdout/stderr so a downstream consumer truncating its end of the pipe (`head -c N`, Claude Code closing early) cannot abort the MultiWriter chain mid-stream. The buffer must always reach `SaveOutput` with the full bytes the proxy emitted.
 - For the same reason, `cmd/ccsb/main.go` ignores `SIGPIPE`. Without that, Go's default handler terminates the process on a broken-pipe write to fd 1/2 *before* `SaveOutput` runs, even though the user-level write returned an error we wanted to swallow.
-- All three capture files share a basename. Pass the same `time.Time` to `capture.Save` and `capture.SaveOutput` so the prefix matches.
+- All capture files for one invocation share a basename — `.json` always, plus `.out`, `.err` and `.diag` when non-empty. Pass the same `time.Time` to `capture.Save` and `capture.SaveOutput` so the prefix matches; `capture.TimeFromName` parses it back, which is what `ccsb doctor` and `ccsb captures clean` sort and prune on.
 
 ## Style Guide
 
@@ -133,25 +140,23 @@ func main() {
 }
 
 func run() error {
+    // Ignore SIGPIPE so a consumer closing stdout cannot kill the process
+    // before the capture files are written.
+    signal.Ignore(syscall.SIGPIPE)
+
     ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
     defer stop()
 
-    self, err := os.Executable()
+    paths, flags, err := cli.NewFromOS()
     if err != nil {
-        return fmt.Errorf("resolve self: %w", err)
+        return err
     }
-    paths := cli.ResolvePaths(cli.Env{
-        Home:          os.Getenv("HOME"),
-        XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"),
-        XDGStateHome:  os.Getenv("XDG_STATE_HOME"),
-        Self:          self,
-    })
-    return cli.Run(ctx, paths, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+    return cli.Run(ctx, paths, flags, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 }
 ```
 
 - `main()` only calls `run()` and handles `os.Exit` — never in `run()`.
-- `run()` is wiring only: resolves env, builds `Paths`, delegates to `internal/pkg/cli`.
+- `run()` is wiring only: `cli.NewFromOS()` resolves `HOME`/`XDG_*`/`NO_COLOR`/`os.Executable()` into `Paths` + `Flags`, then delegates to `internal/pkg/cli`.
 - Application logic lives in `internal/pkg/<name>/`.
 - All I/O is injected: `context.Context`, `args []string`, `stdin io.Reader`, `stdout io.Writer`, `stderr io.Writer`.
 - Filesystem locations travel as explicit values (`cli.Paths`), not via env reads inside library packages.
