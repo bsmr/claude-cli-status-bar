@@ -162,12 +162,14 @@ If you use Claude Code, install the AI-powered configuration wizard:
 ccsb install-skill
 ```
 
-This writes `~/.claude/skills/ccsb-wizard.md`. Inside Claude Code, type
-`/ccsb-wizard` to start an interactive configuration dialogue. Claude reads
-your current config, checks your NerdFont setup, and adjusts the display
-through natural-language questions.
+This writes `~/.claude/skills/ccsb-wizard/SKILL.md` — the layout Claude Code
+discovers personal skills in. Inside Claude Code, type `/ccsb-wizard` to start
+an interactive configuration dialogue. Claude reads your current config, checks
+your NerdFont setup, and adjusts the display through natural-language questions.
 
 Re-run `ccsb install-skill` after updating ccsb to get the latest skill version.
+Installs before 0.4.6 wrote a flat `ccsb-wizard.md` that Claude Code never
+recognised as a skill; re-running removes that leftover automatically.
 
 To remove:
 

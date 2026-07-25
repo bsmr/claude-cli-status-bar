@@ -89,7 +89,7 @@ func TestRun_InstallSkill_CreatesFileAndDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	dest := filepath.Join(e.paths.ClaudeSkillsDir, "ccsb-wizard.md")
+	dest := filepath.Join(e.paths.ClaudeSkillsDir, "ccsb-wizard", "SKILL.md")
 	got, readErr := os.ReadFile(dest)
 	if readErr != nil {
 		t.Fatalf("skill file not written: %v", readErr)
@@ -109,19 +109,19 @@ func TestRun_InstallSkill_CreatesFileAndDir(t *testing.T) {
 	if got := fi.Mode().Perm(); got != 0o600 {
 		t.Errorf("skill file perm: got %o, want 600", got)
 	}
-	di, err := os.Stat(e.paths.ClaudeSkillsDir)
+	di, err := os.Stat(filepath.Dir(dest))
 	if err != nil {
-		t.Fatalf("stat skills dir: %v", err)
+		t.Fatalf("stat skill dir: %v", err)
 	}
 	if got := di.Mode().Perm(); got != 0o700 {
-		t.Errorf("skills dir perm: got %o, want 700", got)
+		t.Errorf("skill dir perm: got %o, want 700", got)
 	}
 	entries, err := os.ReadDir(e.paths.ClaudeSkillsDir)
 	if err != nil {
 		t.Fatalf("read skills dir: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Errorf("expected only ccsb-wizard.md in the skills dir, got %d entries", len(entries))
+	if len(entries) != 1 || entries[0].Name() != "ccsb-wizard" {
+		t.Errorf("expected only the ccsb-wizard/ directory in the skills dir, got %v", entries)
 	}
 }
 
@@ -130,8 +130,11 @@ func TestRun_InstallSkill_OverwritesAndReportsUpdated(t *testing.T) {
 	if err := os.MkdirAll(e.paths.ClaudeSkillsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dest := filepath.Join(e.paths.ClaudeSkillsDir, "ccsb-wizard.md")
-	if err := os.WriteFile(dest, []byte("old"), 0o644); err != nil {
+	dest := filepath.Join(e.paths.ClaudeSkillsDir, "ccsb-wizard", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer

@@ -1,8 +1,18 @@
+---
+name: ccsb-wizard
+description: Use when the user wants to configure, restyle, or troubleshoot the ccsb Claude Code status bar — changing which segments appear, their colours, glyphs, row layout, or bar style. Triggers on "ccsb", "status bar", "statusline", "configure my status bar", "change the bar colours".
+---
+
 # ccsb-wizard
 
 You are helping the user configure ccsb — the Claude Code status bar. ccsb
 renders one or more rows below the Claude Code input prompt. Follow the steps
 below in order.
+
+**Config keys are exact.** ccsb rejects a config it cannot parse: a wrong
+shape (for example `palette` as an object rather than an array) makes ccsb
+exit non-zero, and Claude Code then shows no status bar at all until the file
+is repaired. Only write keys listed in this skill.
 
 ## Step 1: Read the existing config
 
@@ -15,7 +25,7 @@ If the output is `(no config)`, note "starting fresh — will create a new confi
 Otherwise note which segments and rows are already configured so you can offer
 targeted changes rather than a full rewrite.
 
-## Step 2: Symbol check (skip if `symbols.nerd_font` is already set in the config)
+## Step 2: Symbol check
 
 Output exactly these two lines verbatim. The first line contains NerdFont
 codepoints (U+E0A0 branch, U+E0B0 separator) that render as icons in
@@ -29,8 +39,14 @@ NerdFont-capable terminals and as boxes or question marks otherwise:
 Then ask: **"Does the top line show a branch icon before 'main', or does it show
 a box or question mark?"**
 
-- User sees an icon → `symbols.nerd_font: true`
-- User sees a box or question mark → `symbols.nerd_font: false`
+Remember the answer for this session; ccsb has no config key for it. Use it
+to pick glyphs later:
+
+- **Icon** → Powerline is safe: leave `render.powerline` true, keep the
+  default `cap_style`, and keep the circle `bar_style`.
+- **Box or question mark** → avoid NerdFont glyphs: set `render.powerline`
+  to false, and prefer `bar_style: "blocks"` or an explicit ASCII
+  `bar_glyphs` such as `[".", ":", "#"]`.
 
 ## Step 3: Understand the user's intent
 
@@ -77,17 +93,39 @@ Available segment types:
 | `text` | Static label | any string |
 
 Each segment accepts:
-- `fg` / `bg`: 256-color number (0–255) or named palette entry
+- `fg` / `bg`: a 256-color number as a **string**, `"0"`–`"255"`. Names are not
+  supported — `"accent"` renders colourless.
 - `bold`: `true` / `false`
-- `shrink`: segment shrinks then disappears when the terminal is narrow
-- `separator`: per-segment separator override
+- `label`: overrides the segment's default label prefix
+- `align`: `"right"` pushes this and every later segment to the right
+- `wrap`: lift onto a new row when the row would overflow
+- `max_width`: cap the rendered width, ellipsised with `…`
+- `min_cols`: hide the segment when the terminal is narrower than this
+- `shrink`: yield width first when the row would overflow
+
+Percentage segments (`context`, `limit_5h`, `limit_7d`) additionally accept:
+- `style`: `"pct"` (default), `"bar"`, or `"bar+pct"`
+- `bar_width`: bar length in cells (default 16)
+- `bar_style`: `"circles"` (default, `○◔◑◕●`) or `"blocks"` (`░▏▎▍▌▋▊▉█`)
+- `bar_glyphs`: an explicit ramp, e.g. `[".", ":", "#"]`, overriding `bar_style`
+- `token_position`: `"before"`, `"after"` or `"hidden"` — where the token
+  fraction sits relative to the bar (`context` only)
+- `bar_fg` / `label_fg`: colour the bar and the label independently
+- `thresholds` / `bar_thresholds` / `label_thresholds`: `{"70": "136", "90": "160"}`
+  recolours at those percentages
+- `threshold_target`: `"pct"` recolours only the digits, `"all"` the whole segment
 
 Colors: 232–255 are a grayscale ramp (232 ≈ near-black, 255 ≈ near-white).
 Common accents: 196 red · 226 yellow · 46 green · 51 cyan · 21 blue · 135 purple.
 
-Layout: `render.rows` is an array of rows (top to bottom). Each row has `segments`
-(left to right). A named palette can be defined in `render.palette` (name → 256-color
-number) and referenced by name in segment `fg`/`bg` fields.
+Layout: `render.rows` is an array of rows (top to bottom); each row has
+`segments` (left to right) and may set `bg`, `palette`, `caps`, `align`.
+
+`render.palette` is an **array of colour strings**, not a name→colour object —
+writing an object makes ccsb fail to parse the config and the bar disappears.
+Rows step through it by `render.palette_stride` (default 2); the built-in
+default is the nine greys `["232","233","234","235","236","237","238","239","240"]`.
+There is no per-segment `separator`; `render.separator` is row-level only.
 
 ## Step 4: Generate and write the config
 
@@ -99,15 +137,25 @@ Produce the updated config JSON and apply it using the rule below.
 | Small change (one segment, one or two colors) | Write directly; confirm what changed |
 | Substantial rewrite (restructured rows, many color changes) | Show the proposed config; ask **"Shall I write this?"** then write on confirmation |
 
-Write path:
+**Preserve the blocks you did not touch.** `config.json` holds three
+top-level keys: `render` (yours to edit), plus `proxy` and `backup`, which
+belong to ccsb. `backup.previous_status_line` is what `ccsb uninstall`
+restores the user's original statusLine from — overwrite the file wholesale
+and that is gone for good.
+
+So edit the file rather than replacing it. Read it first (Step 1), then use
+the Edit tool to change only the `render` block, or rebuild the whole document
+carrying `proxy` and `backup` over verbatim. Never `cat >` a document that
+contains only `render`.
+
+After writing, verify the config still parses — a malformed file means no
+status bar at all:
 ```bash
-cat > "${XDG_CONFIG_HOME:-$HOME/.config}/ccsb/config.json" << 'EOF'
-{ ... }
-EOF
+ccsb status >/dev/null && echo "config OK"
 ```
 
-After writing, always say: **"Done. The next Claude Code status update will show
-the new layout."**
+Then say: **"Done. The next Claude Code status update will show the new
+layout."**
 
 Do not overwrite the existing config without the user's awareness. ccsb owns
 its config; the wizard is a guest.

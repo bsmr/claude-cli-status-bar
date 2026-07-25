@@ -329,10 +329,11 @@ Subcommands:
               settings.json is not hooked; switches to native mode if the
               proxy command is circular, another ccsb binary, or missing.
   install-skill   Extract the ccsb-wizard Claude Code skill to
-              ~/.claude/skills/ccsb-wizard.md. Run /ccsb-wizard inside
+              ~/.claude/skills/ccsb-wizard/SKILL.md. Run /ccsb-wizard inside
               Claude Code to start an AI-guided configuration dialogue.
               Re-run after updating ccsb to get the latest skill version.
-  uninstall-skill Remove ccsb-wizard.md from ~/.claude/skills/.
+  uninstall-skill Remove ~/.claude/skills/ccsb-wizard/ (and any flat
+              ccsb-wizard.md left by a pre-0.4.6 install).
   version     Print the ccsb version. Aliases: -v, --version.
   help        Print this message. Aliases: -h, --help.
 `
