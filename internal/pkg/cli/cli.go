@@ -124,6 +124,8 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runDoctor(p, stdout)
 	case "refresh-git-dirty":
 		return runRefreshGitDirty(p, args[1:])
+	case "refresh-update-check":
+		return runRefreshUpdateCheck(p)
 	case "install-skill":
 		return runInstallSkill(p, stdout)
 	case "uninstall-skill":
@@ -159,6 +161,20 @@ func runRefreshGitDirty(p Paths, args []string) error {
 		return nil
 	}
 	_ = render.RefreshGitDirty(p.State, args[0])
+	return nil
+}
+
+// runRefreshUpdateCheck backs the hidden `refresh-update-check` subcommand.
+// The renderer starts it detached when the version segment's update-check
+// cache has gone stale; it hits the GitHub API out of band and writes the
+// refreshed tag for the NEXT render to pick up. Deliberately silent —
+// nothing reads its output, and a failure must not surface anywhere near
+// the status line.
+func runRefreshUpdateCheck(p Paths) error {
+	if p.State == "" {
+		return nil
+	}
+	_ = render.RefreshUpdateCheck(p.State)
 	return nil
 }
 

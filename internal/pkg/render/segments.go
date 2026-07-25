@@ -3,6 +3,8 @@ package render
 import (
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -501,17 +503,117 @@ func renderTTYSize(_ *payload, s Segment, env renderEnv) string {
 	return out
 }
 
-// renderVersion emits the ccsb version string from env.version.
-// Hidden when env.version is empty. Dev builds (version == "dev") are
-// prefixed with ☠ (U+2620 SKULL AND CROSSBONES) as a visual warning.
-func renderVersion(_ *payload, _ Segment, env renderEnv) string {
+// renderVersion emits the ccsb version string from env.version, plus an
+// optional "(<glyph> v<latest>)" suffix when a newer GitHub release is
+// available. Hidden when env.version is empty. Dev builds (version ==
+// "dev") are prefixed with ☠ (U+2620 SKULL AND CROSSBONES) and never check
+// for updates — there is no tagged version to compare against.
+//
+// The update check itself never runs on this call: it only ever reads
+// env.stateDir's cache (see updatecheck.go) and, when that cache is
+// missing or stale, spawns a detached background refresher. The render
+// always returns immediately with whatever the cache currently holds.
+func renderVersion(_ *payload, s Segment, env renderEnv) string {
 	if env.version == "" {
 		return ""
 	}
 	if env.version == "dev" {
-		return "☠ v" + env.version // ☠ v dev
+		return "☠ v" + env.version // ☠ vdev
 	}
-	return "v" + env.version
+	base := "v" + env.version
+	if !s.CheckUpdate || env.stateDir == "" {
+		return base
+	}
+	suffix := renderUpdateSuffix(s, env)
+	if suffix == "" {
+		return base
+	}
+	return base + " (" + suffix + ")"
+}
+
+// renderUpdateSuffix returns the colored "<glyph> v<latest>" fragment for
+// renderVersion's parenthesized suffix, or "" when there is nothing to
+// show (running version unparsable, no cache yet, cached tag unparsable,
+// or latest is not newer). Triggers a background refresh via
+// spawnUpdateCheckRefresh whenever the cache is missing, stale, or
+// clock-skewed into the future — mirroring renderGitDirty's out-of-band
+// refresh trigger. The running-version check runs first and skips the
+// network trigger entirely when it fails: an unparsable running version
+// (e.g. a pseudo-version) can never be compared against a fetch result,
+// so there is no point spawning a refresher for it every TTL interval.
+func renderUpdateSuffix(s Segment, env renderEnv) string {
+	current, ok := parseSemver(env.version)
+	if !ok {
+		return ""
+	}
+
+	cached, found := readUpdateCache(UpdateCachePath(env.stateDir))
+	ttl := parseUpdateCheckInterval(s.UpdateCheckInterval)
+	age := env.nowUnix - cached.Unix
+	if !found || age < 0 || age >= int64(ttl.Seconds()) {
+		lockPath := updateLockPath(env.stateDir)
+		if acquireLock(lockPath, updateCheckLockTTL) {
+			if !spawnUpdateCheckRefresh() {
+				// The child never started, so nothing will release the
+				// marker; drop it now so the next render retries instead
+				// of waiting out the lock TTL.
+				releaseLock(lockPath)
+			}
+		}
+	}
+	if !found {
+		return ""
+	}
+	latest, ok := parseSemver(cached.LatestTag)
+	if !ok {
+		return ""
+	}
+	glyph, fg := updateSeverityStyle(s, compareSeverity(current, latest))
+	if glyph == "" {
+		return ""
+	}
+	text := fmt.Sprintf("%s v%d.%d.%d", glyph, latest.major, latest.minor, latest.patch)
+	return wrapPart(text, fg, s.FG, env.colorEnabled)
+}
+
+// updateSeverityStyle maps an updateSeverity to its glyph and foreground
+// color. updateNone returns ("", "") — the caller treats an empty glyph as
+// "nothing to render". A patch-level update uses s.FG as its color (the
+// segment's own ambient color), so wrapPart renders it with no visible
+// recolor — only minor/major/majorFar updates stand out.
+func updateSeverityStyle(s Segment, sev updateSeverity) (glyph, fg string) {
+	switch sev {
+	case updatePatch:
+		return "↑", s.FG
+	case updateMinor:
+		return "↑", s.UpdateMinorFG
+	case updateMajor:
+		return "↑", s.UpdateMajorFG
+	case updateMajorFar:
+		return "⚡", s.UpdateBigFG
+	default:
+		return "", ""
+	}
+}
+
+// spawnUpdateCheckRefresh re-executes ccsb as `ccsb refresh-update-check`
+// and returns immediately without waiting, mirroring spawnDirtyRefresh in
+// gitdirty.go. Every failure is silent by design: a refresh that cannot
+// start simply leaves the cached value in place for the next render to
+// retry. Overridable so tests can observe the trigger without starting
+// processes.
+var spawnUpdateCheckRefresh = func() bool {
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command(self, "refresh-update-check")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	_ = cmd.Process.Release()
+	return true
 }
 
 // renderSchemaHealth emits a single skull glyph (☠ U+2620) when

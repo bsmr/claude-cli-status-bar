@@ -641,9 +641,10 @@ the *next* status update. Consequences worth knowing:
 - `git` must be on `PATH` for the refresher. Without it the segment simply
   stays hidden.
 
-This is the one segment that starts a subprocess — a detached helper, never
-`git` in the render path itself — and only when a config asks for it: it is
-absent from the default layout.
+This is one of two segments that start a subprocess — a detached helper,
+never `git` in the render path itself — and only when a config asks for
+it: it is absent from the default layout. (The other is `version`'s
+`check_update`, below.)
 
 #### `tty_size`
 
@@ -678,15 +679,56 @@ resolved at startup with the first non-empty source winning:
 `-ldflags "-X .../cli.Version=…"` injected at build time, then
 `runtime/debug.ReadBuildInfo().Main.Version` (set by `go install`
 on a tagged module), otherwise the literal `"dev"`. A `"dev"`
-result renders as `"☠ v dev"` (U+2620 SKULL AND CROSSBONES) to
-flag untagged builds. Hidden when the resolution yields the empty
-string, so the surrounding separator or chevron is dropped.
+result renders as `"☠ vdev"` (U+2620 SKULL AND CROSSBONES) to
+flag untagged builds, and skips the update check below entirely.
+Hidden when the resolution yields the empty string, so the
+surrounding separator or chevron is dropped.
+
+When `check_update` is true, the segment also checks
+`github.com/bsmr/claude-cli-status-bar`'s Releases for a newer tag and,
+if one exists, appends `" (<glyph> v<latest>)"`. `check_update`'s Go zero
+value is `false` — `defaultConfig()` sets it `true` in ccsb's own shipped
+layout, but a hand-written config that omits the field gets no background
+check, so set it explicitly if you want this. `update_check_interval` (a
+Go duration string, e.g. `"6h"`; default `"24h"`) bounds how often the
+refresh below re-runs.
+
+**The check is refreshed out of band**, the same way `git_dirty` is
+refreshed (above): rendering never makes the network call itself — it
+reads a cache and prints whatever it currently holds, and when that
+cache is missing, stale, or the running version can't even be parsed as
+semver, starts a detached `ccsb refresh-update-check` that updates the
+cache for the *next* status update. A slow or unreachable GitHub can
+therefore never delay the status line. A failed fetch (offline,
+rate-limited) still stamps the cache with a fresh timestamp so it isn't
+retried on every render, only once per `update_check_interval`.
+
+- The cache lives at `$XDG_STATE_HOME/ccsb/update-check.json` — global,
+  not per-repository, since there is exactly one ccsb release stream.
+  Deleting it is harmless — the next render repopulates it.
+- A single-flight marker (`update-check.json.pending`) beside the cache
+  keeps refreshes to one at a time across however many render passes,
+  consecutive updates, or parallel Claude sessions are running.
+
+The glyph and color escalate with how far the latest release is ahead
+of the running build:
+
+| Gap | Glyph | Color field | Default |
+|---|---|---|---|
+| newer patch | `↑` | (segment's own `fg`) | — |
+| newer minor | `↑` | `update_minor_fg` | `136` |
+| newer major, one ahead | `↑` | `update_major_fg` | `208` |
+| newer major, two+ ahead | `⚡` | `update_big_fg` | `160` |
+
+Set `"check_update": false` to disable the network check entirely.
 
 Typical placement is the last segment of the last row with
 `"align": "right"` so the stamp sits flush right:
 
 ```json
-{"type": "version", "fg": "245", "align": "right"}
+{"type": "version", "fg": "245", "align": "right", "check_update": true,
+ "update_minor_fg": "136", "update_major_fg": "208", "update_big_fg": "160"}
+// "v0.4.6" or, with an update pending: "v0.4.6 (↑ v0.4.9)"
 ```
 
 #### `schema_health`

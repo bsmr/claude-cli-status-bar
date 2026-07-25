@@ -112,6 +112,15 @@ untagged build reports `dev` — Go's `(devel)` placeholder is discarded —
 and the `version` segment then renders a skull marker instead of a
 version. Check out the tag you want shipped if you care about the stamp.
 
+When `check_update` is enabled (the default in ccsb's own shipped layout —
+the Go zero value is `false`, so a hand-written or wizard-generated config
+must set it explicitly), the version segment also checks GitHub for a
+newer release and appends `" (↑ v<latest>)"` — see
+`docs/configuration.md` for the full color-escalation table. The check
+runs out-of-band (a detached `ccsb refresh-update-check`, cached and
+rate-limited like the `git_dirty` segment's refresher) and never delays
+a render.
+
 Requires Go 1.26.3 or newer (see `go.mod`).
 
 ## Use
@@ -228,9 +237,11 @@ a name that does not start with one.
 - **0.4.x** — render options contributed from real-world use: configurable
   bar glyphs (`bar_glyphs` / `bar_style`), independent colour for a bar and
   its label (`bar_fg` / `label_fg` with their own thresholds), placement of
-  the token fraction (`token_position`), and an opt-in `git_dirty` segment
+  the token fraction (`token_position`), an opt-in `git_dirty` segment
   that keeps the render path free of blocking git calls by refreshing a
-  cached count out of band. `0.4.3` acted on a full-codebase review — dead
+  cached count out of band, and a version segment that flags available
+  GitHub releases with escalating color. `0.4.3` acted on a full-codebase
+  review — dead
   code removed, an install-backup bug fixed, the background `git status`
   hardened, and CI extended with a pinned `staticcheck` plus a
   windows/darwin cross-compile matrix. `0.4.4` added `ccsb captures clean`

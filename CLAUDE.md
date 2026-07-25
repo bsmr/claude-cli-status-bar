@@ -16,7 +16,7 @@ cost, etc.), and renders the first line of stdout as the status bar.
 - **Module**: `go.muehmer.eu/claude-cli-status-bar`
 - **Binary**: `ccsb` (short form — used in users' `~/.claude/settings.json` `statusLine.command`).
 - **Runtime contract**: read JSON from stdin, write the rendered status bar to stdout, exit 0. Claude Code renders every line it receives, and the default layout emits two rows — the "single line" of the original 0.1.x contract no longer holds. Errors go to stderr; non-zero exit makes Claude Code fall back silently.
-- **Performance**: Claude Code calls the binary on every status update — startup must be fast (< ~100 ms). Avoid heavy init, network calls in the hot path, or large dependencies.
+- **Performance**: Claude Code calls the binary on every status update — startup must be fast (< ~100 ms). Avoid heavy init, network calls in the hot path, or large dependencies. The one intentional exception is the `version` segment's update check: it never runs on the render path itself, only in a detached `ccsb refresh-update-check` the renderer spawns out-of-band (see `internal/pkg/render/updatecheck.go`).
 
 ### Operating modes
 
@@ -70,11 +70,15 @@ claude-cli-status-bar/
 │   └── pkg/
 │       ├── cli/                    # subcommand dispatcher (install / uninstall / status / mode /
 │       │                             config / captures / doctor / install-skill / uninstall-skill /
-│       │                             version / help, plus the internal refresh-git-dirty helper)
-│       │                             and the no-args proxy-mode entry point
+│       │                             version / help, plus the internal refresh-git-dirty and
+│       │                             refresh-update-check helpers) and the no-args proxy-mode
+│       │                             entry point
 │       ├── render/                 # the native renderer: payload parsing, the segment registry,
 │       │                             Powerline rows, palettes, reflow/shrink, terminal-size
-│       │                             detection, schema diagnostics, git branch/dirty lookups
+│       │                             detection, schema diagnostics, git branch/dirty lookups,
+│       │                             the GitHub release check (updatecheck.go), and the
+│       │                             single-flight lock primitives shared by both out-of-band
+│       │                             refreshers (singleflight.go)
 │       ├── statusline/             # stdin → memory → capture (best effort) → proxy or native render
 │       ├── proxy/                  # exec.CommandContext wrapper: pipes payload to child stdin,
 │       │                             streams stdout/stderr through, propagates *exec.ExitError

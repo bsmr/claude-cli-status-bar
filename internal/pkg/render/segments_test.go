@@ -1,8 +1,11 @@
 package render
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestRenderModel_DefaultDisplayName(t *testing.T) {
@@ -783,5 +786,187 @@ func TestSegmentTypes_SortedAndMatchesRegistry(t *testing.T) {
 		if i > 0 && types[i-1] >= name {
 			t.Errorf("SegmentTypes not strictly sorted: %q before %q", types[i-1], name)
 		}
+	}
+}
+
+// stubUpdateSpawn replaces the background update-check refresher for the
+// duration of a test and reports whether it was triggered. Mirrors
+// stubSpawn (gitdirty_test.go) for the update-check refresher.
+func stubUpdateSpawn(t *testing.T) *bool {
+	t.Helper()
+	called := false
+	prev := spawnUpdateCheckRefresh
+	spawnUpdateCheckRefresh = func() bool { called = true; return true }
+	t.Cleanup(func() { spawnUpdateCheckRefresh = prev })
+	return &called
+}
+
+// withUpdateCache seeds an update-check cache entry and returns the state dir.
+func withUpdateCache(t *testing.T, latestTag string, age time.Duration) string {
+	t.Helper()
+	state := t.TempDir()
+	blob, err := json.Marshal(updateCache{LatestTag: latestTag, Unix: nowFunc().Add(-age).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(UpdateCachePath(state), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func TestRenderVersion_DevBuildSkipsUpdateCheck(t *testing.T) {
+	called := stubUpdateSpawn(t)
+	env := renderEnv{version: "dev", stateDir: t.TempDir(), colorEnabled: true}
+	if got := renderVersion(nil, Segment{CheckUpdate: true}, env); got != "☠ vdev" {
+		t.Errorf("got %q, want \"☠ vdev\"", got)
+	}
+	if *called {
+		t.Error("update check triggered for a dev build")
+	}
+}
+
+func TestRenderVersion_CheckUpdateDisabledSkipsCheck(t *testing.T) {
+	called := stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v9.9.9", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true}
+	if got := renderVersion(nil, Segment{CheckUpdate: false}, env); got != "v0.4.6" {
+		t.Errorf("got %q, want v0.4.6", got)
+	}
+	if *called {
+		t.Error("update check triggered although check_update is false")
+	}
+}
+
+// TestRenderVersion_UnparsableRunningVersionSkipsNetworkCheck is finding 8
+// from the final review: an unparsable running version (e.g. a pseudo
+// version) can never be compared against a fetch result, so the network
+// trigger must be skipped entirely — not just the render of a result —
+// even with no cache present.
+func TestRenderVersion_UnparsableRunningVersionSkipsNetworkCheck(t *testing.T) {
+	called := stubUpdateSpawn(t)
+	env := renderEnv{version: "0.4.6-rc1", stateDir: t.TempDir(), colorEnabled: true}
+	if got := renderVersion(nil, Segment{CheckUpdate: true}, env); got != "v0.4.6-rc1" {
+		t.Errorf("got %q, want v0.4.6-rc1", got)
+	}
+	if *called {
+		t.Error("update check triggered for an unparsable running version")
+	}
+}
+
+func TestRenderVersion_NoCacheTriggersRefreshAndShowsPlainVersion(t *testing.T) {
+	called := stubUpdateSpawn(t)
+	env := renderEnv{version: "0.4.6", stateDir: t.TempDir(), colorEnabled: true}
+	if got := renderVersion(nil, Segment{CheckUpdate: true}, env); got != "v0.4.6" {
+		t.Errorf("got %q, want v0.4.6", got)
+	}
+	if !*called {
+		t.Error("missing cache did not trigger a refresh")
+	}
+}
+
+func TestRenderVersion_UpToDateShowsPlainVersion(t *testing.T) {
+	called := stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v0.4.6", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	if got := renderVersion(nil, Segment{CheckUpdate: true}, env); got != "v0.4.6" {
+		t.Errorf("got %q, want v0.4.6", got)
+	}
+	if *called {
+		t.Error("refresh triggered although the cache is fresh and up to date")
+	}
+}
+
+func TestRenderVersion_PatchUpdateUsesAmbientColor(t *testing.T) {
+	stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v0.4.9", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	s := Segment{CheckUpdate: true, FG: "245", UpdateMinorFG: "136", UpdateMajorFG: "208", UpdateBigFG: "160"}
+	got := renderVersion(nil, s, env)
+	want := "v0.4.6 (↑ v0.4.9)" // no ANSI: innerFG (245) == ambientFG (245)
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderVersion_MinorUpdateColorsSuffixYellow(t *testing.T) {
+	stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v0.5.0", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	s := Segment{CheckUpdate: true, FG: "245", UpdateMinorFG: "136", UpdateMajorFG: "208", UpdateBigFG: "160"}
+	got := renderVersion(nil, s, env)
+	want := "v0.4.6 (\x1b[38;5;136m↑ v0.5.0\x1b[38;5;245m)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderVersion_MajorUpdateColorsSuffixOrange(t *testing.T) {
+	stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v1.0.0", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	s := Segment{CheckUpdate: true, FG: "245", UpdateMinorFG: "136", UpdateMajorFG: "208", UpdateBigFG: "160"}
+	got := renderVersion(nil, s, env)
+	want := "v0.4.6 (\x1b[38;5;208m↑ v1.0.0\x1b[38;5;245m)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderVersion_FarMajorUpdateColorsSuffixRedWithBolt(t *testing.T) {
+	stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v2.0.0", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	s := Segment{CheckUpdate: true, FG: "245", UpdateMinorFG: "136", UpdateMajorFG: "208", UpdateBigFG: "160"}
+	got := renderVersion(nil, s, env)
+	want := "v0.4.6 (\x1b[38;5;160m⚡ v2.0.0\x1b[38;5;245m)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderVersion_StaleCacheStillRendersAndTriggersRefresh(t *testing.T) {
+	called := stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v0.4.9", 25*time.Hour) // older than the 24h default TTL
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	s := Segment{CheckUpdate: true, FG: "245"}
+	if got := renderVersion(nil, s, env); got != "v0.4.6 (↑ v0.4.9)" {
+		t.Errorf("got %q, want v0.4.6 (↑ v0.4.9)", got)
+	}
+	if !*called {
+		t.Error("stale cache did not trigger a refresh")
+	}
+}
+
+func TestRenderVersion_CustomIntervalOverridesDefaultTTL(t *testing.T) {
+	called := stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v0.4.9", 2*time.Hour) // fresh under a 6h interval
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	s := Segment{CheckUpdate: true, FG: "245", UpdateCheckInterval: "6h"}
+	renderVersion(nil, s, env)
+	if *called {
+		t.Error("refresh triggered although the cache is fresh under the configured interval")
+	}
+}
+
+func TestRenderVersion_UnparsableCachedTagShowsPlainVersion(t *testing.T) {
+	stubUpdateSpawn(t)
+	state := withUpdateCache(t, "not-a-version", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: true, nowUnix: nowFunc().Unix()}
+	if got := renderVersion(nil, Segment{CheckUpdate: true, FG: "245"}, env); got != "v0.4.6" {
+		t.Errorf("got %q, want v0.4.6", got)
+	}
+}
+
+func TestRenderVersion_NoColorOmitsEscapesButKeepsGlyph(t *testing.T) {
+	stubUpdateSpawn(t)
+	state := withUpdateCache(t, "v0.5.0", 0)
+	env := renderEnv{version: "0.4.6", stateDir: state, colorEnabled: false, nowUnix: nowFunc().Unix()}
+	s := Segment{CheckUpdate: true, FG: "245", UpdateMinorFG: "136"}
+	if got := renderVersion(nil, s, env); got != "v0.4.6 (↑ v0.5.0)" {
+		t.Errorf("got %q, want v0.4.6 (↑ v0.5.0)", got)
 	}
 }

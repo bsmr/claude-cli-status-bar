@@ -318,6 +318,28 @@ type Segment struct {
 	// itself. "toplevel" reports the outermost superproject of the submodule
 	// chain. Ignored by all other segment types.
 	Scope string `json:"scope,omitempty"`
+
+	// CheckUpdate enables the version segment's background check against
+	// the GitHub Releases API. Ignored by every other segment type.
+	// defaultConfig() sets this true; a hand-written config that omits
+	// the field gets no background check (Go zero value is false).
+	CheckUpdate bool `json:"check_update,omitempty"` // type=version
+
+	// UpdateCheckInterval bounds how often the update check re-runs, as a
+	// Go duration string (e.g. "24h", "6h"). Empty or unparsable falls
+	// back to 24h. Ignored by every other segment type.
+	UpdateCheckInterval string `json:"update_check_interval,omitempty"` // type=version
+
+	// UpdateMinorFG/UpdateMajorFG/UpdateBigFG are the escalating
+	// foreground colors for the version segment's "update available"
+	// suffix, keyed by how far behind the latest GitHub release is: a
+	// newer minor version, a newer major version (one ahead), and a
+	// newer major version (two or more ahead), respectively. A newer
+	// patch version uses the segment's own FG (no distinct color).
+	// Ignored by every other segment type.
+	UpdateMinorFG string `json:"update_minor_fg,omitempty"` // type=version
+	UpdateMajorFG string `json:"update_major_fg,omitempty"` // type=version
+	UpdateBigFG   string `json:"update_big_fg,omitempty"`   // type=version
 }
 
 // Threshold is one entry in Segment.Thresholds. Min is a percentage
@@ -697,7 +719,13 @@ var defaultConfig = Config{
 				{Type: "git_branch", FG: "33"},
 				{Type: "lines", FG: "245"},
 				{Type: "cwd", FG: "245", Shrink: true},
-				{Type: "version", FG: "245", Align: "right"},
+				// check_update defaults on; the three colors escalate
+				// yellow (136, shared with the 70% threshold tier) ->
+				// orange (208) -> red (160, shared with schema_health
+				// and the 90% threshold tier) as the running build falls
+				// further behind the latest GitHub release.
+				{Type: "version", FG: "245", Align: "right", CheckUpdate: true,
+					UpdateMinorFG: "136", UpdateMajorFG: "208", UpdateBigFG: "160"},
 			},
 		},
 	},
@@ -1233,7 +1261,7 @@ func renderRowRight(p *payload, row Row, env renderEnv, sep string) string {
 // Segment functions read these fields but never mutate them.
 type renderEnv struct {
 	cwd            string   // resolved cwd (Options.Cwd or payload.Workspace.CurrentDir)
-	stateDir       string   // Options.StateDir; git_dirty's cache root, "" disables it
+	stateDir       string   // Options.StateDir; cache root for git_dirty and the version segment's update check, "" disables both
 	colorEnabled   bool     // false when NoColor was set on Options
 	nowUnix        int64    // wall clock at the start of Render, for time-based segments
 	ttyCols        int      // detected terminal columns, 0 when unknown

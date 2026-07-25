@@ -342,6 +342,32 @@ func TestRun_RefreshGitDirty_OutsideRepositoryWritesNothing(t *testing.T) {
 	assertNoDirtyCache(t, e.paths.State)
 }
 
+// Hidden refresh-update-check subcommand: the wiring the renderer's
+// detached refresher invokes to update the cached latest GitHub release.
+
+func TestRun_RefreshUpdateCheck_WithoutStateDirIsANoop(t *testing.T) {
+	e := newEnv(t) // Paths.State is empty
+
+	var out, errOut bytes.Buffer
+	err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"refresh-update-check"}, nil, &out, &errOut)
+	if err != nil {
+		t.Fatalf("refresh-update-check: %v", err)
+	}
+	if out.Len() != 0 || errOut.Len() != 0 {
+		t.Errorf("refresh-update-check must stay silent, got stdout=%q stderr=%q", out.String(), errOut.String())
+	}
+}
+
+// The "GitHub unreachable" branch — refresh-update-check must never
+// surface a fetch failure as a CLI error (mirrors runRefreshGitDirty's
+// silence-on-failure contract) — is exercised without any real network
+// dependency by TestRefreshUpdateCheck_ReleasesLockEvenOnFailure in
+// internal/pkg/render/updatecheck_test.go (against 127.0.0.1:1). A
+// same-shape test here would either hit the real api.github.com on any
+// networked machine, or — since the subcommand swallows all errors by
+// design — assert nothing beyond what
+// TestRun_RefreshUpdateCheck_WithoutStateDirIsANoop above already covers.
+
 // Uninstall.
 
 func TestUninstall_RestoresPreviousStatusLine(t *testing.T) {

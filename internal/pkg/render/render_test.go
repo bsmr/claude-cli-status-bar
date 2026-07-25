@@ -65,6 +65,34 @@ func TestRender_DefaultLayoutDevVersionShowsSkull(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_VersionSegmentHasUpdateCheckDefaults(t *testing.T) {
+	var version Segment
+	found := false
+	for _, row := range defaultConfig.Rows {
+		for _, s := range row.Segments {
+			if s.Type == "version" {
+				version = s
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("default config has no version segment")
+	}
+	if !version.CheckUpdate {
+		t.Error("default version segment must have check_update enabled")
+	}
+	for name, got := range map[string]string{
+		"UpdateMinorFG": version.UpdateMinorFG,
+		"UpdateMajorFG": version.UpdateMajorFG,
+		"UpdateBigFG":   version.UpdateBigFG,
+	} {
+		if got == "" {
+			t.Errorf("default version segment: %s is empty, want a color", name)
+		}
+	}
+}
+
 // TestRender_BrokenPayloadRendersSchemaHealthMarker pins the
 // never-blank guarantee of the default layout: for any payload the
 // parser cannot make sense of, detectSchemaIssue fires and the default
