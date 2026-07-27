@@ -33,6 +33,9 @@ The capture path exists primarily to inspect what Claude Code actually sends, so
 ```bash
 go build -o bin/ccsb ./cmd/ccsb        # build (output MUST go to bin/; version comes from ReadBuildInfo — "dev" only off-tag)
 go build -o bin/ccsb -ldflags "-X go.muehmer.eu/claude-cli-status-bar/internal/pkg/cli.Version=X.Y.Z" ./cmd/ccsb  # versioned build
+# Release builds (GoReleaser) add -buildvcs=false and always inject the version
+# via that -X ldflag: a stamped vcs.revision means "local build" to the
+# self-update guard, so release binaries must carry none.
 go test ./...                           # all tests
 go test -race -cover ./...              # with race detector and coverage
 go vet ./...                            # static checks
@@ -233,8 +236,13 @@ If `git branch -vv` shows `main` as `[origin/main: N behind]`, stop and fix this
 
    The `vX.Y.Z` tag is what the Go module proxy and `go install module@vX.Y.Z`
    use to resolve the version. `runtime/debug.ReadBuildInfo()` inside ccsb reads
-   it back at startup so `go install`-built binaries show the correct version
+   it back at startup, so `go install`-built binaries show the correct version
    without any `-ldflags` required.
+
+   GoReleaser builds are the exception: they run `-buildvcs=false` and inject
+   the version via `-X …/cli.Version={{ .Version }}`. Without that, the release
+   binaries would carry `vcs.revision`, which the self-update guard reads as
+   "local build" and refuses to overwrite. See `.goreleaser.yaml`.
 
 ### Remotes
 

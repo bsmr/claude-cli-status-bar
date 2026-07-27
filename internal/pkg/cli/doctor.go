@@ -202,5 +202,30 @@ func runDoctor(p Paths, stdout io.Writer) error {
 			fmt.Fprintf(stdout, "ccsb: doctor: schema-check: additive keys: %s\n", strings.Join(res.Extra, ", "))
 		}
 	}
+
+	if diag := updateDiagnostic(p.State); diag != "" {
+		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
+	}
 	return nil
+}
+
+// updateDiagnostic explains why self-updating is blocked, or returns "" when
+// there is nothing to report. It reads the record the updater leaves behind
+// rather than re-running the guards, so the answer matches what actually
+// happened on the last attempt.
+func updateDiagnostic(stateDir string) string {
+	att, ok := render.ReadUpdateAttempt(stateDir)
+	if !ok || att.Blocked == render.BlockNone {
+		return ""
+	}
+	switch att.Blocked {
+	case render.BlockWindows:
+		return "self-update: blocked (windows — swap the release archive manually)"
+	case render.BlockLocalBuild:
+		return "self-update: blocked (local build — rebuild with go build -o bin/ccsb ./cmd/ccsb)"
+	case render.BlockNotWritable:
+		return "self-update: blocked (target directory not writable — reinstall with the privileges that own it; ccsb never elevates by itself)"
+	default:
+		return fmt.Sprintf("self-update: blocked (%s)", att.Blocked)
+	}
 }

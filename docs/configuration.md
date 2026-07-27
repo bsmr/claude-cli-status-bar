@@ -720,6 +720,29 @@ of the running build:
 | newer major, one ahead | `↑` | `update_major_fg` | `208` |
 | newer major, two+ ahead | `⚡` | `update_big_fg` | `160` |
 
+**`⊘` (U+2298 CIRCLED DIVISION SLASH) replaces `↑`/`⚡` when a newer
+release exists but `ccsb update` cannot apply it here.** The severity
+color is kept — only the glyph changes, from "go get it" to "go get it
+by hand". `ccsb update` refuses in three cases: on Windows (replacing a
+running `.exe` is not supported), on a binary built from a local
+checkout rather than installed from a tagged release, and when the
+binary's directory is not writable.
+
+`ccsb doctor` reports which of the three applies, but only after
+`ccsb update` has actually been run at least once: `doctor` reads the
+attempt record the updater leaves behind rather than re-running the
+checks itself, so it has nothing to say until an update has been
+attempted. The `⊘` glyph does not wait for that in every case, though:
+
+- The Windows and local-build reasons show up in `⊘` immediately, on
+  the very next render — the renderer decides both in-process (target
+  OS, build metadata), the same way it decides `dev` above.
+- The not-writable reason is different: only the updater can discover
+  it by probing the target directory, and rendering never does
+  filesystem probes. So `⊘` for a not-writable target — and `doctor`'s
+  explanation for any of the three — only appears once `ccsb update`
+  has actually been attempted.
+
 Set `"check_update": false` to disable the network check entirely.
 
 Typical placement is the last segment of the last row with

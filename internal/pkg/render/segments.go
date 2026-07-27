@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -531,6 +533,15 @@ func renderVersion(_ *payload, s Segment, env renderEnv) string {
 	return base + " (" + suffix + ")"
 }
 
+// buildInfoFunc reads this binary's build info; goosFunc reports the target
+// OS. Package variables so tests can drive updateBlocked: a test binary is
+// always a local build, so the real ReadBuildInfo would report every test as
+// blocked. Production code never reassigns them.
+var (
+	buildInfoFunc = debug.ReadBuildInfo
+	goosFunc      = func() string { return runtime.GOOS }
+)
+
 // renderUpdateSuffix returns the colored "<glyph> v<latest>" fragment for
 // renderVersion's parenthesized suffix, or "" when there is nothing to
 // show (running version unparsable, no cache yet, cached tag unparsable,
@@ -542,7 +553,7 @@ func renderVersion(_ *payload, s Segment, env renderEnv) string {
 // (e.g. a pseudo-version) can never be compared against a fetch result,
 // so there is no point spawning a refresher for it every TTL interval.
 func renderUpdateSuffix(s Segment, env renderEnv) string {
-	current, ok := parseSemver(env.version)
+	current, ok := ParseSemver(env.version)
 	if !ok {
 		return ""
 	}
@@ -564,36 +575,79 @@ func renderUpdateSuffix(s Segment, env renderEnv) string {
 	if !found {
 		return ""
 	}
-	latest, ok := parseSemver(cached.LatestTag)
+	latest, ok := ParseSemver(cached.LatestTag)
 	if !ok {
 		return ""
 	}
-	glyph, fg := updateSeverityStyle(s, compareSeverity(current, latest))
-	if glyph == "" {
+	// Compute severity and bail out before touching updateBlocked: Go
+	// evaluates call arguments eagerly, so inlining updateBlocked(...) into
+	// the updateSeverityStyle call below would read update-attempt.json on
+	// every render, even for the overwhelmingly common SeverityNone case
+	// (already up to date) where the result is immediately discarded. Do
+	// not collapse this back into a single expression.
+	sev := CompareSeverity(current, latest)
+	if sev == SeverityNone {
 		return ""
 	}
-	text := fmt.Sprintf("%s v%d.%d.%d", glyph, latest.major, latest.minor, latest.patch)
+	glyph, fg := updateSeverityStyle(s, sev, updateBlocked(env.stateDir))
+	text := fmt.Sprintf("%s v%d.%d.%d", glyph, latest.Major, latest.Minor, latest.Patch)
 	return wrapPart(text, fg, s.FG, env.colorEnabled)
 }
 
-// updateSeverityStyle maps an updateSeverity to its glyph and foreground
-// color. updateNone returns ("", "") — the caller treats an empty glyph as
+// updateBlockedGlyph marks a detected update that cannot be applied on this
+// system — the user has to intervene by hand. Distinct from the ↑/⚡ glyphs
+// so it can be looked up in the documentation and in `ccsb doctor`.
+const updateBlockedGlyph = "⊘"
+
+// updateBlocked reports whether a self-update is impossible here. Probes in
+// cost order and never touches the network or tests filesystem permissions:
+// the two in-process checks answer immediately, and the attempt record is a
+// file this package reads anyway.
+//
+// Consequence worth knowing: the not-writable case only surfaces after an
+// update has actually been attempted once. Detecting it earlier would mean
+// probing the filesystem during a render, which this project does not do.
+func updateBlocked(stateDir string) bool {
+	if goosFunc() == "windows" {
+		return true
+	}
+	if info, ok := buildInfoFunc(); ok && info != nil {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && s.Value != "" {
+				return true
+			}
+		}
+	}
+	att, ok := ReadUpdateAttempt(stateDir)
+	return ok && att.Blocked != BlockNone
+}
+
+// updateSeverityStyle maps a Severity to its glyph and foreground color.
+// SeverityNone returns ("", "") — the caller treats an empty glyph as
 // "nothing to render". A patch-level update uses s.FG as its color (the
 // segment's own ambient color), so wrapPart renders it with no visible
 // recolor — only minor/major/majorFar updates stand out.
-func updateSeverityStyle(s Segment, sev updateSeverity) (glyph, fg string) {
+//
+// When blocked is true the glyph becomes ⊘ while the severity's color is
+// kept: escalation by jump distance still applies, only the message changes
+// from "go get it" to "go get it by hand".
+func updateSeverityStyle(s Segment, sev Severity, blocked bool) (glyph, fg string) {
 	switch sev {
-	case updatePatch:
-		return "↑", s.FG
-	case updateMinor:
-		return "↑", s.UpdateMinorFG
-	case updateMajor:
-		return "↑", s.UpdateMajorFG
-	case updateMajorFar:
-		return "⚡", s.UpdateBigFG
+	case SeverityPatch:
+		glyph, fg = "↑", s.FG
+	case SeverityMinor:
+		glyph, fg = "↑", s.UpdateMinorFG
+	case SeverityMajor:
+		glyph, fg = "↑", s.UpdateMajorFG
+	case SeverityMajorFar:
+		glyph, fg = "⚡", s.UpdateBigFG
 	default:
 		return "", ""
 	}
+	if blocked {
+		glyph = updateBlockedGlyph
+	}
+	return glyph, fg
 }
 
 // spawnUpdateCheckRefresh re-executes ccsb as `ccsb refresh-update-check`

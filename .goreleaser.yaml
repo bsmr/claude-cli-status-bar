@@ -32,13 +32,23 @@ builds:
       # there is concrete demand.
       - goos: windows
         goarch: arm64
-    # No explicit -X ldflag for the version: runtime/debug.ReadBuildInfo()
-    # picks up the tag automatically when go build runs on a tagged
-    # commit, and that is what GoReleaser does here.
+    # -buildvcs=false is load-bearing, not cosmetic. GoReleaser builds
+    # inside a full git checkout, so the toolchain would stamp vcs.revision
+    # into the release binaries — and ccsb's self-update guard reads exactly
+    # that setting as "this is a local build, refuse to overwrite it". With
+    # VCS stamping left on, every release user is refused an update and sees
+    # ⊘ instead of ↑. vcs.revision must mean "local build" and nothing else.
+    #
+    # Dropping the VCS info also drops the version ReadBuildInfo() derived
+    # from it (and the `+dirty` suffix the `go mod tidy` hook above provoked,
+    # which render.ParseSemver cannot parse), so the version is injected
+    # explicitly instead. internal/pkg/cli.Version prefers this ldflag over
+    # ReadBuildInfo().
     ldflags:
-      - -s -w
+      - -s -w -X go.muehmer.eu/claude-cli-status-bar/internal/pkg/cli.Version={{ .Version }}
     flags:
       - -trimpath
+      - -buildvcs=false
 
 archives:
   - id: ccsb

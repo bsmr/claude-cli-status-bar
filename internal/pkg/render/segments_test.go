@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"testing"
 	"time"
 )
@@ -968,5 +970,83 @@ func TestRenderVersion_NoColorOmitsEscapesButKeepsGlyph(t *testing.T) {
 	s := Segment{CheckUpdate: true, FG: "245", UpdateMinorFG: "136"}
 	if got := renderVersion(nil, s, env); got != "v0.4.6 (↑ v0.5.0)" {
 		t.Errorf("got %q, want v0.4.6 (↑ v0.5.0)", got)
+	}
+}
+
+// stubBuildInfo installs build info carrying the given vcs.revision ("" for
+// a go install build, which has no vcs settings at all).
+func stubBuildInfo(t *testing.T, revision string) {
+	t.Helper()
+	restore := buildInfoFunc
+	info := &debug.BuildInfo{}
+	if revision != "" {
+		info.Settings = []debug.BuildSetting{{Key: "vcs.revision", Value: revision}}
+	}
+	buildInfoFunc = func() (*debug.BuildInfo, bool) { return info, true }
+	t.Cleanup(func() { buildInfoFunc = restore })
+}
+
+func stubGOOS(t *testing.T, goos string) {
+	t.Helper()
+	restore := goosFunc
+	goosFunc = func() string { return goos }
+	t.Cleanup(func() { goosFunc = restore })
+}
+
+func TestUpdateBlockedFromAttemptRecord(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteUpdateAttempt(dir, BlockNotWritable); err != nil {
+		t.Fatal(err)
+	}
+	if !updateBlocked(dir) {
+		t.Error("updateBlocked = false, want true for a not-writable record")
+	}
+}
+
+func TestUpdateBlockedOnWindows(t *testing.T) {
+	stubGOOS(t, "windows")
+	if !updateBlocked(t.TempDir()) {
+		t.Error("updateBlocked = false on windows, want true")
+	}
+}
+
+func TestUpdateBlockedForLocalBuild(t *testing.T) {
+	stubBuildInfo(t, "91a8bdd0deaf81d32e980802fd5af60dae223029")
+	if !updateBlocked(t.TempDir()) {
+		t.Error("updateBlocked = false for a local build, want true")
+	}
+}
+
+func TestUpdateNotBlockedWithoutRecord(t *testing.T) {
+	if updateBlocked(t.TempDir()) {
+		t.Error("updateBlocked = true without a record, want false")
+	}
+}
+
+func TestUpdateNotBlockedAfterSuccessfulAttempt(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteUpdateAttempt(dir, BlockNone); err != nil {
+		t.Fatal(err)
+	}
+	if updateBlocked(dir) {
+		t.Error("updateBlocked = true after a clean attempt, want false")
+	}
+}
+
+func TestRenderVersionShowsBlockedGlyph(t *testing.T) {
+	stubUpdateSpawn(t)
+	dir := withUpdateCache(t, "v0.5.0", time.Minute)
+	if err := WriteUpdateAttempt(dir, BlockNotWritable); err != nil {
+		t.Fatal(err)
+	}
+	s := Segment{Type: "version", CheckUpdate: true}
+	env := renderEnv{version: "0.4.7", stateDir: dir, nowUnix: nowFunc().Unix()}
+
+	got := renderVersion(nil, s, env)
+	if !strings.Contains(got, "⊘") {
+		t.Errorf("renderVersion = %q, want the ⊘ glyph", got)
+	}
+	if strings.Contains(got, "↑") {
+		t.Errorf("renderVersion = %q, want ↑ replaced by ⊘", got)
 	}
 }
