@@ -16,6 +16,7 @@ import (
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/claudesettings"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/selfupdate"
 )
 
 // proxyIssue returns a non-empty human-readable description when cmd is a
@@ -203,22 +204,31 @@ func runDoctor(p Paths, stdout io.Writer) error {
 		}
 	}
 
-	if diag := updateDiagnostic(p.State); diag != "" {
+	// Ask the guards directly. doctor is not the render path, so the
+	// writability probe is free here — and it means this line agrees with the
+	// ⊘ glyph even before any update has been attempted.
+	blocked := selfupdate.Guard(selfupdate.Options{StateDir: p.State, Self: p.Self})
+	if diag := updateDiagnostic(blocked); diag != "" {
 		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
 	}
 	return nil
 }
 
-// updateDiagnostic explains why self-updating is blocked, or returns "" when
-// there is nothing to report. It reads the record the updater leaves behind
-// rather than re-running the guards, so the answer matches what actually
-// happened on the last attempt.
-func updateDiagnostic(stateDir string) string {
-	att, ok := render.ReadUpdateAttempt(stateDir)
-	if !ok || att.Blocked == render.BlockNone {
+// updateDiagnostic explains a self-update block reason, or returns "" when
+// nothing blocks it.
+//
+// The reason is supplied by the caller rather than read from the updater's
+// attempt record. That record only exists once `ccsb update` has actually
+// run, which would leave doctor silent for a user who sees the ⊘ glyph and
+// comes here for the explanation — the glyph appears immediately for the
+// in-process reasons. Running the guards instead means both always agree.
+// The renderer cannot do the same: its writability probe is filesystem work,
+// which the render path must not perform.
+func updateDiagnostic(reason render.BlockReason) string {
+	if reason == render.BlockNone {
 		return ""
 	}
-	switch att.Blocked {
+	switch reason {
 	case render.BlockWindows:
 		return "self-update: blocked (windows — swap the release archive manually)"
 	case render.BlockLocalBuild:
@@ -226,6 +236,6 @@ func updateDiagnostic(stateDir string) string {
 	case render.BlockNotWritable:
 		return "self-update: blocked (target directory not writable — reinstall with the privileges that own it; ccsb never elevates by itself)"
 	default:
-		return fmt.Sprintf("self-update: blocked (%s)", att.Blocked)
+		return fmt.Sprintf("self-update: blocked (%s)", reason)
 	}
 }

@@ -79,6 +79,20 @@ release:
     `ccsb`, place it on `$PATH`, then run `ccsb install` to hook it into
     Claude Code's `~/.claude/settings.json`.
 
+    ## Updating
+
+    From 0.4.8 on, `ccsb update` replaces the running binary in place —
+    via `go install` when ccsb lives in `GOBIN`, otherwise by downloading
+    the archive above and verifying it against `checksums.txt`.
+
+    **Upgrading from 0.4.7 or earlier requires a manual download.** Those
+    builds were stamped with VCS metadata that made them indistinguishable
+    from a local `go build`, which `ccsb update` refuses to overwrite — so
+    they cannot update themselves to this release. Replace the binary once
+    by hand and `ccsb update` works from then on. The same metadata made
+    0.4.7 report its version as `0.4.7+dirty`, which disabled its
+    update-available indicator; that is fixed here too.
+
     See the [README](README.md) for the full subcommand surface and
     [docs/configuration.md](docs/configuration.md) for the renderer
     schema.
