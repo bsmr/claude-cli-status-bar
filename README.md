@@ -10,10 +10,11 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.4` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.8` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
-> `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb).
+> `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
+> added the `ccsb update` self-updater and its `⊘` blocked indicator).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -72,6 +73,16 @@ for compatibility with existing setups (see [Background](#background)).
   Useful for setups that already have a different statusLine renderer in
   place — ccsb sits in front of it for capture and schema-drift logging
   while the existing renderer keeps driving the visible bar.
+- **Self-update** — `ccsb update` replaces the running binary with the
+  newest GitHub release. It uses `go install` when a Go toolchain is on
+  `$PATH` and the running binary lives in `GOBIN`; otherwise, or if
+  `go install` fails, it downloads the release archive and verifies it
+  against the release's `checksums.txt` (this catches a corrupted
+  download, not a compromised release — the checksum file ships from the
+  same place as the archive). It refuses on Windows, on binaries built
+  from a local checkout rather than installed from a tagged release, and
+  when the target directory is not writable; `ccsb doctor` reports which,
+  once an update has been attempted.
 
 ## Install
 
@@ -106,11 +117,14 @@ without cloning:
 go install go.muehmer.eu/claude-cli-status-bar/cmd/ccsb@vX.Y.Z   # or @latest
 ```
 
-The version segment reads its string from `runtime/debug.ReadBuildInfo()`:
-a binary built from a checked-out tag reports that tag (`v0.4.4`). An
-untagged build reports `dev` — Go's `(devel)` placeholder is discarded —
-and the `version` segment then renders a skull marker instead of a
-version. Check out the tag you want shipped if you care about the stamp.
+The version segment's string is resolved at startup: a downloaded release
+archive carries the version injected at build time via an `-X` ldflag,
+while a `go install` of a tagged version or a local `go build` from a
+checked-out tag reports the tag `runtime/debug.ReadBuildInfo()` stamps
+(`v0.4.8`). An untagged build reports `dev` — Go's `(devel)` placeholder
+is discarded — and the `version` segment then renders a skull marker
+instead of a version. Check out the tag you want shipped if you care
+about the stamp.
 
 When `check_update` is enabled (the default in ccsb's own shipped layout —
 the Go zero value is `false`, so a hand-written or wizard-generated config
@@ -135,6 +149,7 @@ ccsb captures clean               # remove captured payloads and output
 ccsb captures clean --older-than 7d  # ... keeping anything newer
 ccsb status       # print resolved paths, hook state, mode, proxy/backup
 ccsb doctor       # diagnose and auto-fix install/proxy problems, check schema drift
+ccsb update       # replace this binary with the newest GitHub release
 ccsb install-skill   # install the ccsb-wizard configuration skill
 ccsb uninstall-skill # remove it again
 ccsb uninstall    # restore the previous statusLine byte-for-byte

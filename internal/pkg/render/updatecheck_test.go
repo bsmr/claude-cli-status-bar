@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,26 +15,26 @@ import (
 func TestParseSemver_ValidAndInvalid(t *testing.T) {
 	cases := []struct {
 		in   string
-		want semver
+		want Semver
 		ok   bool
 	}{
-		{"v0.4.6", semver{0, 4, 6}, true},
-		{"0.4.6", semver{0, 4, 6}, true},
-		{"v2.0.0", semver{2, 0, 0}, true},
-		{"", semver{}, false},
-		{"v1.2", semver{}, false},
-		{"v1.2.3.4", semver{}, false},
-		{"vX.Y.Z", semver{}, false},
-		{"dev", semver{}, false},
+		{"v0.4.6", Semver{0, 4, 6}, true},
+		{"0.4.6", Semver{0, 4, 6}, true},
+		{"v2.0.0", Semver{2, 0, 0}, true},
+		{"", Semver{}, false},
+		{"v1.2", Semver{}, false},
+		{"v1.2.3.4", Semver{}, false},
+		{"vX.Y.Z", Semver{}, false},
+		{"dev", Semver{}, false},
 	}
 	for _, c := range cases {
-		got, ok := parseSemver(c.in)
+		got, ok := ParseSemver(c.in)
 		if ok != c.ok {
-			t.Errorf("parseSemver(%q): ok = %v, want %v", c.in, ok, c.ok)
+			t.Errorf("ParseSemver(%q): ok = %v, want %v", c.in, ok, c.ok)
 			continue
 		}
 		if ok && got != c.want {
-			t.Errorf("parseSemver(%q) = %+v, want %+v", c.in, got, c.want)
+			t.Errorf("ParseSemver(%q) = %+v, want %+v", c.in, got, c.want)
 		}
 	}
 }
@@ -41,21 +42,21 @@ func TestParseSemver_ValidAndInvalid(t *testing.T) {
 func TestCompareSeverity(t *testing.T) {
 	cases := []struct {
 		name            string
-		current, latest semver
-		want            updateSeverity
+		current, latest Semver
+		want            Severity
 	}{
-		{"equal", semver{0, 4, 6}, semver{0, 4, 6}, updateNone},
-		{"older latest", semver{0, 4, 6}, semver{0, 4, 5}, updateNone},
-		{"patch newer", semver{0, 4, 6}, semver{0, 4, 9}, updatePatch},
-		{"minor newer", semver{0, 4, 6}, semver{0, 5, 0}, updateMinor},
-		{"minor newer ignores lower patch", semver{0, 4, 6}, semver{0, 5, 0}, updateMinor},
-		{"major one ahead", semver{0, 4, 6}, semver{1, 0, 0}, updateMajor},
-		{"major two ahead", semver{0, 4, 6}, semver{2, 0, 0}, updateMajorFar},
-		{"major far ahead", semver{0, 4, 6}, semver{5, 1, 2}, updateMajorFar},
+		{"equal", Semver{0, 4, 6}, Semver{0, 4, 6}, SeverityNone},
+		{"older latest", Semver{0, 4, 6}, Semver{0, 4, 5}, SeverityNone},
+		{"patch newer", Semver{0, 4, 6}, Semver{0, 4, 9}, SeverityPatch},
+		{"minor newer", Semver{0, 4, 6}, Semver{0, 5, 0}, SeverityMinor},
+		{"minor newer ignores lower patch", Semver{0, 4, 6}, Semver{0, 5, 0}, SeverityMinor},
+		{"major one ahead", Semver{0, 4, 6}, Semver{1, 0, 0}, SeverityMajor},
+		{"major two ahead", Semver{0, 4, 6}, Semver{2, 0, 0}, SeverityMajorFar},
+		{"major far ahead", Semver{0, 4, 6}, Semver{5, 1, 2}, SeverityMajorFar},
 	}
 	for _, c := range cases {
-		if got := compareSeverity(c.current, c.latest); got != c.want {
-			t.Errorf("%s: compareSeverity(%+v, %+v) = %v, want %v", c.name, c.current, c.latest, got, c.want)
+		if got := CompareSeverity(c.current, c.latest); got != c.want {
+			t.Errorf("%s: CompareSeverity(%+v, %+v) = %v, want %v", c.name, c.current, c.latest, got, c.want)
 		}
 	}
 }
@@ -111,7 +112,7 @@ func TestFetchLatestTag_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := fetchLatestTag(context.Background(), srv.URL)
+	got, err := FetchLatestTag(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestFetchLatestTag_NonOKStatusIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := fetchLatestTag(context.Background(), srv.URL); err == nil {
+	if _, err := FetchLatestTag(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected an error for a 404 response")
 	}
 }
@@ -137,7 +138,7 @@ func TestFetchLatestTag_MalformedJSONIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := fetchLatestTag(context.Background(), srv.URL); err == nil {
+	if _, err := FetchLatestTag(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected an error for malformed JSON")
 	}
 }
@@ -148,7 +149,7 @@ func TestFetchLatestTag_EmptyTagNameIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := fetchLatestTag(context.Background(), srv.URL); err == nil {
+	if _, err := FetchLatestTag(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected an error for an empty tag_name")
 	}
 }
@@ -158,14 +159,14 @@ func TestFetchLatestTag_UnreachableServerIsError(t *testing.T) {
 	url := srv.URL
 	srv.Close() // now guaranteed unreachable
 
-	if _, err := fetchLatestTag(context.Background(), url); err == nil {
+	if _, err := FetchLatestTag(context.Background(), url); err == nil {
 		t.Fatal("expected an error for an unreachable server")
 	}
 }
 
 func TestFetchLatestTag_OversizedBodyIsBounded(t *testing.T) {
 	// The genuine tag_name only appears after maxUpdateCheckResponseBytes
-	// of padding. If fetchLatestTag read the body without a bound, the
+	// of padding. If FetchLatestTag read the body without a bound, the
 	// full JSON would parse and "v1.0.0" would come back with no error;
 	// bounded to maxUpdateCheckResponseBytes, the decoder only ever sees
 	// the still-open padding string and must fail.
@@ -175,7 +176,7 @@ func TestFetchLatestTag_OversizedBodyIsBounded(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := fetchLatestTag(context.Background(), srv.URL); err == nil {
+	if _, err := FetchLatestTag(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected an error for a response exceeding the size bound")
 	}
 }
@@ -300,5 +301,59 @@ func TestRefreshUpdateCheck_FailureThenStaleCheckWithinTTLDoesNotRetrigger(t *te
 	}
 	if called {
 		t.Error("a cache freshly stamped by a failed refresh must not retrigger a spawn within the TTL")
+	}
+}
+
+func TestWriteAndReadUpdateAttempt(t *testing.T) {
+	dir := t.TempDir()
+	restore := nowFunc
+	nowFunc = func() time.Time { return time.Unix(1753660000, 0) }
+	defer func() { nowFunc = restore }()
+
+	if err := WriteUpdateAttempt(dir, BlockNotWritable); err != nil {
+		t.Fatalf("WriteUpdateAttempt: %v", err)
+	}
+	got, ok := ReadUpdateAttempt(dir)
+	if !ok {
+		t.Fatal("ReadUpdateAttempt: ok = false, want true")
+	}
+	if got.Unix != 1753660000 {
+		t.Errorf("Unix = %d, want 1753660000", got.Unix)
+	}
+	if got.Blocked != BlockNotWritable {
+		t.Errorf("Blocked = %q, want %q", got.Blocked, BlockNotWritable)
+	}
+}
+
+func TestReadUpdateAttemptMissing(t *testing.T) {
+	if _, ok := ReadUpdateAttempt(t.TempDir()); ok {
+		t.Error("ok = true for a missing file, want false")
+	}
+}
+
+func TestReadUpdateAttemptMalformed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(UpdateAttemptPath(dir), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadUpdateAttempt(dir); ok {
+		t.Error("ok = true for a malformed file, want false")
+	}
+}
+
+func TestWriteUpdateAttemptSuccessClearsBlock(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteUpdateAttempt(dir, BlockNotWritable); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteUpdateAttempt(dir, BlockNone); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ReadUpdateAttempt(dir)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if got.Blocked != BlockNone {
+		t.Errorf("Blocked = %q, want empty", got.Blocked)
 	}
 }

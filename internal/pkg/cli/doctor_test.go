@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
 func TestLatestCaptureJSON_EmptyDir(t *testing.T) {
@@ -184,5 +186,32 @@ func TestSchemaCheck_NotJSONObject(t *testing.T) {
 	got := schemaCheck(dir)
 	if !strings.Contains(got.Note, "not a JSON object") {
 		t.Errorf("expected Note about JSON object, got %q", got.Note)
+	}
+}
+
+func TestUpdateDiagnosticReportsBlockReason(t *testing.T) {
+	dir := t.TempDir()
+	if err := render.WriteUpdateAttempt(dir, render.BlockNotWritable); err != nil {
+		t.Fatal(err)
+	}
+	got := updateDiagnostic(dir)
+	if !strings.Contains(got, "not writable") {
+		t.Errorf("updateDiagnostic = %q, want it to explain the block", got)
+	}
+}
+
+func TestUpdateDiagnosticSilentWithoutRecord(t *testing.T) {
+	if got := updateDiagnostic(t.TempDir()); got != "" {
+		t.Errorf("updateDiagnostic = %q, want empty without a record", got)
+	}
+}
+
+func TestUpdateDiagnosticSilentAfterCleanAttempt(t *testing.T) {
+	dir := t.TempDir()
+	if err := render.WriteUpdateAttempt(dir, render.BlockNone); err != nil {
+		t.Fatal(err)
+	}
+	if got := updateDiagnostic(dir); got != "" {
+		t.Errorf("updateDiagnostic = %q, want empty after a clean attempt", got)
 	}
 }

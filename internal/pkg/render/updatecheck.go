@@ -40,10 +40,15 @@ const (
 	githubLatestReleaseURL = "https://api.github.com/repos/bsmr/claude-cli-status-bar/releases/latest"
 
 	// maxUpdateCheckResponseBytes bounds how much of the HTTP response body
-	// fetchLatestTag will read. 1 MiB is generously larger than any real
+	// FetchLatestTag will read. 1 MiB is generously larger than any real
 	// GitHub releases-API JSON payload — this is ccsb's only code path that
 	// decodes data from a third party over the network, so it gets a bound.
 	maxUpdateCheckResponseBytes = 1 << 20
+
+	// LatestReleaseURL is the GitHub releases endpoint ccsb checks. Exported
+	// so internal/pkg/selfupdate can reuse the single release stream rather
+	// than defining a second copy of the URL.
+	LatestReleaseURL = githubLatestReleaseURL
 )
 
 // updateCheckURL is the endpoint RefreshUpdateCheck queries. A package var
@@ -100,72 +105,72 @@ func parseUpdateCheckInterval(v string) time.Duration {
 	return d
 }
 
-// semver is a parsed X.Y.Z version, used to compare the running ccsb
+// Semver is a parsed X.Y.Z version, used to compare the running ccsb
 // version against the latest GitHub release tag.
-type semver struct {
-	major, minor, patch int
+type Semver struct {
+	Major, Minor, Patch int
 }
 
-// parseSemver parses "vX.Y.Z" or "X.Y.Z" into a semver. Any other shape
+// ParseSemver parses "vX.Y.Z" or "X.Y.Z" into a Semver. Any other shape
 // (missing component, non-numeric component, extra suffix like "-rc1")
 // reports ok=false — an update comparison that can't be trusted is
 // treated as "no update to show", never guessed at.
-func parseSemver(s string) (semver, bool) {
+func ParseSemver(s string) (Semver, bool) {
 	s = strings.TrimPrefix(s, "v")
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {
-		return semver{}, false
+		return Semver{}, false
 	}
 	nums := make([]int, 3)
 	for i, part := range parts {
 		n, err := strconv.Atoi(part)
 		if err != nil {
-			return semver{}, false
+			return Semver{}, false
 		}
 		nums[i] = n
 	}
-	return semver{major: nums[0], minor: nums[1], patch: nums[2]}, true
+	return Semver{Major: nums[0], Minor: nums[1], Patch: nums[2]}, true
 }
 
-// updateSeverity classifies how far the latest release is ahead of the
+// Severity classifies how far the latest release is ahead of the
 // running version, driving both the glyph and the color the version
 // segment renders.
-type updateSeverity int
+type Severity int
 
 const (
-	updateNone     updateSeverity = iota // not newer, or unparsable
-	updatePatch                          // same major.minor, newer patch
-	updateMinor                          // same major, newer minor
-	updateMajor                          // exactly one major version ahead
-	updateMajorFar                       // two or more major versions ahead
+	SeverityNone     Severity = iota // not newer, or unparsable
+	SeverityPatch                    // same major.minor, newer patch
+	SeverityMinor                    // same major, newer minor
+	SeverityMajor                    // exactly one major version ahead
+	SeverityMajorFar                 // two or more major versions ahead
 )
 
-// compareSeverity classifies latest relative to current. A latest that is
-// equal to or older than current is updateNone.
-func compareSeverity(current, latest semver) updateSeverity {
+// CompareSeverity classifies latest relative to current. A latest that is
+// equal to or older than current is SeverityNone.
+func CompareSeverity(current, latest Semver) Severity {
 	switch {
-	case latest.major > current.major:
-		if latest.major-current.major >= 2 {
-			return updateMajorFar
+	case latest.Major > current.Major:
+		if latest.Major-current.Major >= 2 {
+			return SeverityMajorFar
 		}
-		return updateMajor
-	case latest.major < current.major:
-		return updateNone
-	case latest.minor > current.minor:
-		return updateMinor
-	case latest.minor < current.minor:
-		return updateNone
-	case latest.patch > current.patch:
-		return updatePatch
+		return SeverityMajor
+	case latest.Major < current.Major:
+		return SeverityNone
+	case latest.Minor > current.Minor:
+		return SeverityMinor
+	case latest.Minor < current.Minor:
+		return SeverityNone
+	case latest.Patch > current.Patch:
+		return SeverityPatch
 	default:
-		return updateNone
+		return SeverityNone
 	}
 }
 
-// fetchLatestTag fetches the tag_name of the latest release from the
+// FetchLatestTag fetches the tag_name of the latest release from the
 // GitHub Releases API at url. Requires a User-Agent header — GitHub
 // rejects unauthenticated requests without one (403).
-func fetchLatestTag(ctx context.Context, url string) (string, error) {
+func FetchLatestTag(ctx context.Context, url string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, updateCheckTimeout)
 	defer cancel()
 
@@ -211,7 +216,7 @@ func fetchLatestTag(ctx context.Context, url string) (string, error) {
 // network, rate-limited) would never produce a cache entry to age out of
 // freshness — spawning a new refresher on every single render instead of
 // at most once per Segment.UpdateCheckInterval. An empty LatestTag is
-// handled gracefully downstream: parseSemver("") fails, so
+// handled gracefully downstream: ParseSemver("") fails, so
 // renderUpdateSuffix shows nothing, exactly like "no cache yet".
 func RefreshUpdateCheck(stateDir string) error {
 	// Clear the single-flight marker on the way out — whether the fetch
@@ -219,7 +224,7 @@ func RefreshUpdateCheck(stateDir string) error {
 	// the marker's TTL expires.
 	defer releaseLock(updateLockPath(stateDir))
 
-	tag, err := fetchLatestTag(context.Background(), updateCheckURL)
+	tag, err := FetchLatestTag(context.Background(), updateCheckURL)
 	if err != nil {
 		prev, _ := readUpdateCache(UpdateCachePath(stateDir))
 		if blob, marshalErr := json.Marshal(updateCache{LatestTag: prev.LatestTag, Unix: nowFunc().Unix()}); marshalErr == nil {
@@ -232,4 +237,64 @@ func RefreshUpdateCheck(stateDir string) error {
 		return err
 	}
 	return fileutil.WriteAtomic(UpdateCachePath(stateDir), blob)
+}
+
+// BlockReason names why an update cannot be applied on this system. It is
+// persisted in the update-attempt record so the renderer can show the
+// blocked-state glyph without performing any probe of its own — the render
+// path must never touch the network or test filesystem permissions.
+type BlockReason string
+
+const (
+	// BlockNone means the attempt was not blocked by a guard.
+	BlockNone BlockReason = ""
+	// BlockWindows means the running binary cannot be replaced in place.
+	BlockWindows BlockReason = "windows"
+	// BlockLocalBuild means the binary came from a local `go build`.
+	BlockLocalBuild BlockReason = "local-build"
+	// BlockNotWritable means the directory holding the binary is read-only.
+	BlockNotWritable BlockReason = "not-writable"
+)
+
+// UpdateAttempt is the on-disk record of the last self-update attempt. It is
+// stamped on every exit path — success, guard refusal and mid-run failure
+// alike. That is deliberate: without a stamp on failure, a permanently
+// failing update (no network, broken asset) would leave the severity raised
+// and spawn a fresh attempt on every render past the lock TTL. Ageing the
+// failure out exactly like an ordinary check keeps one retry path instead of
+// two.
+type UpdateAttempt struct {
+	Unix    int64       `json:"unix"`
+	Blocked BlockReason `json:"blocked,omitempty"`
+}
+
+// UpdateAttemptPath returns the update-attempt record inside stateDir, a
+// sibling of the update check's cache.
+func UpdateAttemptPath(stateDir string) string {
+	return filepath.Join(stateDir, "update-attempt.json")
+}
+
+// ReadUpdateAttempt loads the last attempt record. ok is false for a
+// missing, unreadable or malformed file — each of which simply means "no
+// attempt on record".
+func ReadUpdateAttempt(stateDir string) (UpdateAttempt, bool) {
+	raw, err := os.ReadFile(UpdateAttemptPath(stateDir))
+	if err != nil {
+		return UpdateAttempt{}, false
+	}
+	var a UpdateAttempt
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return UpdateAttempt{}, false
+	}
+	return a, true
+}
+
+// WriteUpdateAttempt stamps the attempt record with the current time and the
+// given block reason (BlockNone when no guard fired).
+func WriteUpdateAttempt(stateDir string, blocked BlockReason) error {
+	blob, err := json.Marshal(UpdateAttempt{Unix: nowFunc().Unix(), Blocked: blocked})
+	if err != nil {
+		return err
+	}
+	return fileutil.WriteAtomic(UpdateAttemptPath(stateDir), blob)
 }

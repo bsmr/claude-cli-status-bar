@@ -92,7 +92,7 @@ type UnknownSubcommandError struct {
 }
 
 func (e *UnknownSubcommandError) Error() string {
-	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, config, captures, doctor, install-skill, uninstall-skill, version, help)", e.Name)
+	return fmt.Sprintf("ccsb: unknown subcommand %q (valid: install, uninstall, status, mode, config, captures, doctor, update, install-skill, uninstall-skill, version, help)", e.Name)
 }
 
 // Run dispatches based on args[0]. Without args, runs the proxy/fallback
@@ -122,6 +122,8 @@ func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, 
 		return runCaptures(p, args[1:], stdout)
 	case "doctor":
 		return runDoctor(p, stdout)
+	case "update":
+		return runUpdate(ctx, p, stdout, stderr)
 	case "refresh-git-dirty":
 		return runRefreshGitDirty(p, args[1:])
 	case "refresh-update-check":
@@ -344,6 +346,8 @@ Subcommands:
   doctor      Diagnose and auto-fix configuration problems: re-installs if
               settings.json is not hooked; switches to native mode if the
               proxy command is circular, another ccsb binary, or missing.
+  update      Replace this binary with the newest GitHub release. Refuses
+              on locally built binaries, Windows, and non-writable targets.
   install-skill   Extract the ccsb-wizard Claude Code skill to
               ~/.claude/skills/ccsb-wizard/SKILL.md. Run /ccsb-wizard inside
               Claude Code to start an AI-guided configuration dialogue.
