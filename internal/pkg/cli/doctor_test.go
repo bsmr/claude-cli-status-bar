@@ -189,29 +189,75 @@ func TestSchemaCheck_NotJSONObject(t *testing.T) {
 	}
 }
 
-func TestUpdateDiagnosticReportsBlockReason(t *testing.T) {
-	dir := t.TempDir()
-	if err := render.WriteUpdateAttempt(dir, render.BlockNotWritable); err != nil {
-		t.Fatal(err)
+// updateDiagnostic maps a block reason to its explanation. Every reason gets
+// a case, so a user who sees the ⊘ glyph always finds the same answer here —
+// the glyph and this line are driven by the same guards.
+func TestUpdateDiagnostic(t *testing.T) {
+	tests := []struct {
+		name   string
+		reason render.BlockReason
+		want   string // substring the message must contain
+	}{
+		{"windows", render.BlockWindows, "windows"},
+		{"local build", render.BlockLocalBuild, "local build"},
+		{"not writable", render.BlockNotWritable, "not writable"},
+		{"unknown reason", render.BlockReason("something-new"), "something-new"},
 	}
-	got := updateDiagnostic(dir)
-	if !strings.Contains(got, "not writable") {
-		t.Errorf("updateDiagnostic = %q, want it to explain the block", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := updateDiagnostic(tt.reason)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("updateDiagnostic(%q) = %q, want it to mention %q", tt.reason, got, tt.want)
+			}
+			if !strings.HasPrefix(got, "self-update: ") {
+				t.Errorf("updateDiagnostic(%q) = %q, want the self-update: prefix", tt.reason, got)
+			}
+			if strings.Contains(got, "ccsb: doctor:") {
+				t.Errorf("updateDiagnostic(%q) = %q, must not repeat the caller's prefix", tt.reason, got)
+			}
+		})
 	}
 }
 
-func TestUpdateDiagnosticSilentWithoutRecord(t *testing.T) {
-	if got := updateDiagnostic(t.TempDir()); got != "" {
-		t.Errorf("updateDiagnostic = %q, want empty without a record", got)
+func TestUpdateDiagnosticSilentWhenNotBlocked(t *testing.T) {
+	if got := updateDiagnostic(render.BlockNone); got != "" {
+		t.Errorf("updateDiagnostic(BlockNone) = %q, want empty", got)
 	}
 }
 
-func TestUpdateDiagnosticSilentAfterCleanAttempt(t *testing.T) {
-	dir := t.TempDir()
-	if err := render.WriteUpdateAttempt(dir, render.BlockNone); err != nil {
+// runDoctor must reach updateDiagnostic through the real guard, not just have
+// the mapping tested in isolation. A read-only directory holding the binary is
+// the reason that reproduces reliably here: a test binary carries no vcs.*
+// stamps, so the local-build guard does not fire for it.
+func TestDoctorReportsBlockedSelfUpdate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	home := t.TempDir()
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if got := updateDiagnostic(dir); got != "" {
-		t.Errorf("updateDiagnostic = %q, want empty after a clean attempt", got)
+	binDir := t.TempDir()
+	self := filepath.Join(binDir, "ccsb")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"statusLine":{"type":"command","command":"`+self+`"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(binDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(binDir, 0o700) })
+
+	var out strings.Builder
+	p := Paths{Settings: settings, Config: filepath.Join(t.TempDir(), "config.json"),
+		Capture: t.TempDir(), State: t.TempDir(), Self: self}
+	if err := runDoctor(p, &out); err != nil {
+		t.Fatalf("runDoctor: %v", err)
+	}
+	if !strings.Contains(out.String(), "self-update: blocked (target directory not writable") {
+		t.Errorf("doctor output lacks the blocked line:\n%s", out.String())
 	}
 }

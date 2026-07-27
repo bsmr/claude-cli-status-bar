@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.8` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.9` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -81,8 +81,11 @@ for compatibility with existing setups (see [Background](#background)).
   download, not a compromised release — the checksum file ships from the
   same place as the archive). It refuses on Windows, on binaries built
   from a local checkout rather than installed from a tagged release, and
-  when the target directory is not writable; `ccsb doctor` reports which,
-  once an update has been attempted.
+  when the target directory is not writable; `ccsb doctor` names which.
+  Upgrading *from* 0.4.7 or earlier is a manual download: those builds
+  carried VCS metadata that `ccsb update` reads as a local build and
+  refuses to overwrite, so they cannot update themselves. Swap the binary
+  by hand once and self-update works from then on.
 
 ## Install
 
