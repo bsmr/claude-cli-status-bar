@@ -903,6 +903,80 @@ func TestDoctor_FixesProxyNotFound(t *testing.T) {
 	}
 }
 
+// `ccsb mode proxy` writes the documented default `npx -y ccstatusline@latest`
+// — a bare command name resolved through PATH, not a path on disk. Resolving
+// it with os.Stat tests it against the process cwd instead, so doctor decided
+// the target did not exist and permanently deleted a working proxy block.
+func TestDoctor_KeepsProxyCommandResolvedViaPath(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+
+	// A real executable reachable only through PATH, never through the cwd.
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "my-statusline"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "my-statusline", Args: []string{"-y"}}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	c := e.loadConfig(t)
+	if c.Proxy.Command != "my-statusline" {
+		t.Errorf("doctor destroyed a PATH-resolvable proxy: command = %q, want %q\noutput:\n%s",
+			c.Proxy.Command, "my-statusline", out.String())
+	}
+	if !reflect.DeepEqual(c.Proxy.Args, []string{"-y"}) {
+		t.Errorf("proxy args: got %v, want [-y]", c.Proxy.Args)
+	}
+	if !strings.Contains(out.String(), "no issues found") {
+		t.Errorf("expected 'no issues found', got:\n%s", out.String())
+	}
+}
+
+// The counterpart: consulting PATH must not turn the check into "accept
+// anything". A bare name that resolves nowhere is still a broken proxy.
+func TestDoctor_FixesProxyCommandMissingFromPath(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+	t.Setenv("PATH", t.TempDir()) // empty: nothing resolves
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "definitely-not-on-path"}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if c := e.loadConfig(t); c.Proxy.Command != "" {
+		t.Errorf("doctor should have cleared an unresolvable proxy, got %q", c.Proxy.Command)
+	}
+}
+
+// `ccsb status` runs the same check, so the same bug printed a bogus
+// "[WARNING: proxy target not found on disk]" next to a perfectly good
+// configuration.
+func TestStatus_NoWarningForProxyCommandResolvedViaPath(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
+
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "my-statusline"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "my-statusline"}})
+
+	var out, errOut bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"status"}, nil, &out, &errOut); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if strings.Contains(out.String(), "WARNING") {
+		t.Errorf("no warning expected for a PATH-resolvable proxy, got:\n%s", out.String())
+	}
+}
+
 func TestDoctor_InstallsWhenNotHooked(t *testing.T) {
 	e := newEnv(t)
 	// settings.json points to something else, not self.

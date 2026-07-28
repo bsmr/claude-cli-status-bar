@@ -2,11 +2,10 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,7 +21,18 @@ import (
 // proxyIssue returns a non-empty human-readable description when cmd is a
 // problematic proxy target relative to self. The three cases are: cmd equals
 // self (circular loop), cmd has the same base name as self (another ccsb
-// binary), and cmd does not exist on disk.
+// binary), and cmd cannot be resolved to an executable.
+//
+// Resolution goes through exec.LookPath, which is what actually launching the
+// proxy will do (proxy.Run -> exec.CommandContext). A bare command name is a
+// PATH lookup, not a relative path: the documented default proxy is
+// "npx -y ccstatusline@latest", and os.Stat("npx") tests the process cwd,
+// finds nothing, and reports a working configuration as broken. Since the
+// caller reacts to that by clearing and saving the proxy block, the mistake
+// destroyed the very configuration `ccsb mode proxy` had just written.
+// LookPath also covers the path-like forms — a name containing a separator is
+// tried directly and PATH is not consulted — and additionally requires the
+// executable bit, which a proxy target needs anyway.
 func proxyIssue(cmd, self string) string {
 	switch {
 	case cmd == self:
@@ -30,8 +40,8 @@ func proxyIssue(cmd, self string) string {
 	case filepath.Base(cmd) == filepath.Base(self):
 		return "proxy appears to be another ccsb binary"
 	default:
-		if _, err := os.Stat(cmd); errors.Is(err, fs.ErrNotExist) {
-			return "proxy target not found on disk"
+		if _, err := exec.LookPath(cmd); err != nil {
+			return "proxy target not found or not executable"
 		}
 		return ""
 	}

@@ -357,7 +357,9 @@ Subcommands:
               Captures are diagnostic only and safe to remove at any time.
   doctor      Diagnose and auto-fix configuration problems: re-installs if
               settings.json is not hooked; switches to native mode if the
-              proxy command is circular, another ccsb binary, or missing.
+              proxy command is circular, another ccsb binary, or cannot be
+              resolved to an executable. Resolution uses PATH, so a bare
+              command name like "npx" counts as found when it is installed.
   update      Replace this binary with the newest GitHub release. Refuses
               on locally built binaries, Windows, and non-writable targets.
   install-skill   Extract the ccsb-wizard Claude Code skill to

@@ -17,7 +17,8 @@ for compatibility with existing setups (see [Background](#background)).
 > added the `ccsb update` self-updater and its `⊘` blocked indicator;
 > `0.4.10` added the opt-in `update.auto` config block that lets the
 > renderer run `ccsb update` for you; `0.4.11` closed two paths that could
-> destroy the statusLine ccsb had promised to restore).
+> destroy the statusLine ccsb had promised to restore; `0.4.12` stopped
+> `ccsb doctor` from deleting a proxy command it only failed to resolve).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -63,8 +64,9 @@ for compatibility with existing setups (see [Background](#background)).
   `~/.claude/settings.json` with the path to this binary and saves the
   previous value verbatim; `ccsb uninstall` restores it byte-for-byte;
   `ccsb doctor` auto-installs if the hook drifted, switches to native
-  mode if the proxy target is circular or missing, and reports schema
-  drift against the latest capture.
+  mode if the proxy target is circular or cannot be resolved to an
+  executable (resolved through `PATH`, so a bare `npx` counts as found),
+  and reports schema drift against the latest capture.
 - **Mode + config** — `ccsb mode native` clears the proxy block;
   `ccsb mode proxy [cmd args]` reinstates it (defaulting to the
   same command the install heuristic recognises, for symmetry);
