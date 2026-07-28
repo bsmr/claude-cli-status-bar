@@ -248,7 +248,10 @@ If `git branch -vv` shows `main` as `[origin/main: N behind]`, stop and fix this
 
 - `origin` → personal/private fork (read-write).
 - `upstream` → shared team repo (read-only; read-write for maintainers).
-- External sources prefixed (`github-upstream`, `github-origin`, …).
+- `github` → the public GitHub mirror (read-write). Pushing a tag there
+  triggers GoReleaser and publishes real release assets, so it is never a
+  routine step: each push needs explicit approval. Named after the platform,
+  not suffixed — it was `github-origin` until 2026-07-28.
 
 ### Commit messages
 
