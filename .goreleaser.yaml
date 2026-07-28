@@ -5,9 +5,13 @@
 # Release with auto-generated notes drawn from the commits since the
 # previous tag.
 #
-# Local validation (when goreleaser is installed):
-#   goreleaser check
-#   goreleaser release --snapshot --clean --skip=publish
+# Local validation — no install needed, and this pins the same version
+# .github/workflows/release.yml runs, so a local pass means the tag push
+# will pass too:
+#   go run github.com/goreleaser/goreleaser/v2@v2.17.1 check
+#   go run github.com/goreleaser/goreleaser/v2@v2.17.1 release --snapshot --clean --skip=publish
+# Output lands in ./dist (gitignored). Keep the version here in step with
+# release.yml.
 version: 2
 
 before:
@@ -56,7 +60,7 @@ archives:
       ccsb_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     files:
       - LICENSE
       - README.md
