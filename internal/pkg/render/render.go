@@ -366,6 +366,10 @@ type Options struct {
 	// git_dirty segment keeps its cache below it. Empty disables that
 	// segment — with nowhere to cache, there is nothing to show.
 	StateDir string
+	// AutoUpdate is the user's update.auto preference ("patch", "minor",
+	// "major"; anything else disables it). The version segment uses it to
+	// decide whether to start a background `ccsb update`.
+	AutoUpdate string
 }
 
 // payload mirrors the subset of the Claude Code statusLine payload that
@@ -1107,6 +1111,7 @@ func Render(opts Options, raw []byte) (string, error) {
 		capStyle:       cfg.CapStyle,
 		schemaIssue:    schemaIssue,
 		globalPalette:  globalPalette,
+		autoUpdate:     opts.AutoUpdate,
 	}
 	env.ttyCols, env.ttyRows = discoverTermSize(cfg)
 	env.margin = cfg.effectiveMargin()
@@ -1270,6 +1275,7 @@ type renderEnv struct {
 	powerlineStyle string   // "thin" (default) | "solid"; used by renderRowPowerline via pickGlyph
 	capStyle       string   // "" / "round" / "square" / "slant"; "" → round
 	version        string   // ccsb version forwarded from Options.Version
+	autoUpdate     string   // Options.AutoUpdate; "" disables the auto-update trigger
 	schemaIssue    bool     // true when the inbound payload looks broken; drives the schema_health segment
 	globalPalette  []string // Config.Palette (or defaultGlobalPalette when unset); see effectiveSegmentBg
 	paletteStart   int      // offset into globalPalette for the current output row (= rowOutputIndex * stride)

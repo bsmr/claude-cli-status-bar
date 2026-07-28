@@ -261,3 +261,32 @@ func TestDoctorReportsBlockedSelfUpdate(t *testing.T) {
 		t.Errorf("doctor output lacks the blocked line:\n%s", out.String())
 	}
 }
+
+func TestAutoUpdateDiagnostic(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string // "" means silent
+	}{
+		{"", ""},
+		{"patch", ""},
+		{"minor", ""},
+		{"major", ""},
+		{"PATCH", "PATCH"},
+		{"always", "always"},
+	}
+	for _, tt := range tests {
+		got := autoUpdateDiagnostic(tt.in)
+		if tt.want == "" {
+			if got != "" {
+				t.Errorf("autoUpdateDiagnostic(%q) = %q, want silence", tt.in, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, tt.want) {
+			t.Errorf("autoUpdateDiagnostic(%q) = %q, want it to quote the bad value", tt.in, got)
+		}
+		if !strings.Contains(got, "patch") || !strings.Contains(got, "minor") || !strings.Contains(got, "major") {
+			t.Errorf("autoUpdateDiagnostic(%q) = %q, want it to list the accepted values", tt.in, got)
+		}
+	}
+}

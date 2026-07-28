@@ -993,43 +993,59 @@ func stubGOOS(t *testing.T, goos string) {
 	t.Cleanup(func() { goosFunc = restore })
 }
 
-func TestUpdateBlockedFromAttemptRecord(t *testing.T) {
+func TestReadUpdateStatusFromAttemptRecord(t *testing.T) {
 	dir := t.TempDir()
+	restore := nowFunc
+	nowFunc = func() time.Time { return time.Unix(1785000000, 0) }
+	t.Cleanup(func() { nowFunc = restore })
+
 	if err := WriteUpdateAttempt(dir, BlockNotWritable); err != nil {
 		t.Fatal(err)
 	}
-	if !updateBlocked(dir) {
-		t.Error("updateBlocked = false, want true for a not-writable record")
+	st := readUpdateStatus(dir)
+	if !st.blocked {
+		t.Error("blocked = false, want true for a not-writable record")
+	}
+	if st.lastAttempt != 1785000000 {
+		t.Errorf("lastAttempt = %d, want 1785000000", st.lastAttempt)
 	}
 }
 
-func TestUpdateBlockedOnWindows(t *testing.T) {
-	stubGOOS(t, "windows")
-	if !updateBlocked(t.TempDir()) {
-		t.Error("updateBlocked = false on windows, want true")
+func TestReadUpdateStatusWithoutRecord(t *testing.T) {
+	st := readUpdateStatus(t.TempDir())
+	if st.blocked {
+		t.Error("blocked = true without a record, want false")
+	}
+	if st.lastAttempt != 0 {
+		t.Errorf("lastAttempt = %d without a record, want 0", st.lastAttempt)
 	}
 }
 
-func TestUpdateBlockedForLocalBuild(t *testing.T) {
-	stubBuildInfo(t, "91a8bdd0deaf81d32e980802fd5af60dae223029")
-	if !updateBlocked(t.TempDir()) {
-		t.Error("updateBlocked = false for a local build, want true")
-	}
-}
-
-func TestUpdateNotBlockedWithoutRecord(t *testing.T) {
-	if updateBlocked(t.TempDir()) {
-		t.Error("updateBlocked = true without a record, want false")
-	}
-}
-
-func TestUpdateNotBlockedAfterSuccessfulAttempt(t *testing.T) {
+func TestReadUpdateStatusAfterCleanAttempt(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteUpdateAttempt(dir, BlockNone); err != nil {
 		t.Fatal(err)
 	}
-	if updateBlocked(dir) {
-		t.Error("updateBlocked = true after a clean attempt, want false")
+	st := readUpdateStatus(dir)
+	if st.blocked {
+		t.Error("blocked = true after a clean attempt, want false")
+	}
+	if st.lastAttempt == 0 {
+		t.Error("lastAttempt = 0 after a clean attempt, want the stamp")
+	}
+}
+
+func TestReadUpdateStatusBlockedOnWindows(t *testing.T) {
+	stubGOOS(t, "windows")
+	if !readUpdateStatus(t.TempDir()).blocked {
+		t.Error("blocked = false on windows, want true")
+	}
+}
+
+func TestReadUpdateStatusBlockedForLocalBuild(t *testing.T) {
+	stubBuildInfo(t, "91a8bdd0deaf81d32e980802fd5af60dae223029")
+	if !readUpdateStatus(t.TempDir()).blocked {
+		t.Error("blocked = false for a local build, want true")
 	}
 }
 
@@ -1048,5 +1064,132 @@ func TestRenderVersionShowsBlockedGlyph(t *testing.T) {
 	}
 	if strings.Contains(got, "↑") {
 		t.Errorf("renderVersion = %q, want ↑ replaced by ⊘", got)
+	}
+}
+
+// stubSelfUpdateSpawn records whether the auto-updater was started.
+func stubSelfUpdateSpawn(t *testing.T) *bool {
+	t.Helper()
+	called := false
+	prev := spawnSelfUpdate
+	spawnSelfUpdate = func() bool { called = true; return true }
+	t.Cleanup(func() { spawnSelfUpdate = prev })
+	return &called
+}
+
+func TestAutoUpdateSpawnsWithinCeiling(t *testing.T) {
+	called := stubSelfUpdateSpawn(t)
+	stubUpdateSpawn(t)
+	dir := withUpdateCache(t, "v0.4.9", time.Minute) // current 0.4.8 → patch
+	env := renderEnv{version: "0.4.8", stateDir: dir, nowUnix: nowFunc().Unix(), autoUpdate: "patch"}
+
+	renderVersion(nil, Segment{Type: "version", CheckUpdate: true}, env)
+	if !*called {
+		t.Error("spawnSelfUpdate not called for a patch update with auto=patch")
+	}
+}
+
+func TestAutoUpdateSilentAboveCeiling(t *testing.T) {
+	called := stubSelfUpdateSpawn(t)
+	stubUpdateSpawn(t)
+	dir := withUpdateCache(t, "v0.5.0", time.Minute) // current 0.4.8 → minor
+	env := renderEnv{version: "0.4.8", stateDir: dir, nowUnix: nowFunc().Unix(), autoUpdate: "patch"}
+
+	renderVersion(nil, Segment{Type: "version", CheckUpdate: true}, env)
+	if *called {
+		t.Error("spawnSelfUpdate called for a minor update with auto=patch")
+	}
+}
+
+func TestAutoUpdateOffByDefault(t *testing.T) {
+	called := stubSelfUpdateSpawn(t)
+	stubUpdateSpawn(t)
+	dir := withUpdateCache(t, "v0.4.9", time.Minute)
+	env := renderEnv{version: "0.4.8", stateDir: dir, nowUnix: nowFunc().Unix()} // autoUpdate unset
+
+	renderVersion(nil, Segment{Type: "version", CheckUpdate: true}, env)
+	if *called {
+		t.Error("spawnSelfUpdate called with no auto-update configured")
+	}
+}
+
+func TestAutoUpdateSkippedWhenBlocked(t *testing.T) {
+	called := stubSelfUpdateSpawn(t)
+	stubUpdateSpawn(t)
+	stubBuildInfo(t, "91a8bdd0deaf81d32e980802fd5af60dae223029") // local build
+	dir := withUpdateCache(t, "v0.4.9", time.Minute)
+	env := renderEnv{version: "0.4.8", stateDir: dir, nowUnix: nowFunc().Unix(), autoUpdate: "patch"}
+
+	renderVersion(nil, Segment{Type: "version", CheckUpdate: true}, env)
+	if *called {
+		t.Error("spawnSelfUpdate called for a local build — the guard would refuse anyway")
+	}
+}
+
+// The backoff is the whole retry-storm defence: a failed attempt leaves the
+// severity raised, so without it every render past the lock TTL would start
+// another update.
+func TestAutoUpdateRespectsBackoff(t *testing.T) {
+	called := stubSelfUpdateSpawn(t)
+	stubUpdateSpawn(t)
+	dir := withUpdateCache(t, "v0.4.9", time.Minute)
+	if err := WriteUpdateAttempt(dir, BlockNone); err != nil {
+		t.Fatal(err)
+	}
+	env := renderEnv{version: "0.4.8", stateDir: dir, nowUnix: nowFunc().Unix(), autoUpdate: "patch"}
+
+	renderVersion(nil, Segment{Type: "version", CheckUpdate: true}, env)
+	if *called {
+		t.Error("spawnSelfUpdate called while a recent attempt is on record")
+	}
+}
+
+func TestAutoUpdateAfterBackoffElapsed(t *testing.T) {
+	called := stubSelfUpdateSpawn(t)
+	stubUpdateSpawn(t)
+	dir := withUpdateCache(t, "v0.4.9", time.Minute)
+	if err := WriteUpdateAttempt(dir, BlockNone); err != nil {
+		t.Fatal(err)
+	}
+	// 25h later: past the default 24h interval.
+	env := renderEnv{version: "0.4.8", stateDir: dir,
+		nowUnix: nowFunc().Add(25 * time.Hour).Unix(), autoUpdate: "patch"}
+
+	renderVersion(nil, Segment{Type: "version", CheckUpdate: true}, env)
+	if !*called {
+		t.Error("spawnSelfUpdate not called after the backoff elapsed")
+	}
+}
+
+// The single-flight marker carries the backoff's TTL so that a child which
+// died before stamping the attempt record — SIGKILL, reboot, disk full —
+// still cannot retry early. Without an attempt record on disk the marker is
+// the only brake left, which is exactly the case this pins.
+func TestAutoUpdateSuppressedByUnexpiredLock(t *testing.T) {
+	called := stubSelfUpdateSpawn(t)
+	stubUpdateSpawn(t)
+	dir := withUpdateCache(t, "v0.4.9", time.Minute)
+	// A marker from a child that never stamped anything: no attempt record.
+	if !acquireLock(selfUpdateLockPath(dir), 24*time.Hour) {
+		t.Fatal("could not seed the single-flight marker")
+	}
+	// Backdate it by an hour. acquireLock judges age by the marker's mtime
+	// against the TTL its CALLER passes — the TTL is never stored on disk —
+	// so a fresh marker is suppressed by any TTL and would prove nothing.
+	// At one hour old, the 24h backoff TTL still suppresses the spawn while
+	// the old fixed 10-minute TTL would reclaim the marker as orphaned and
+	// spawn. Do not "simplify" this back to a freshly created marker.
+	old := nowFunc().Add(-time.Hour)
+	if err := os.Chtimes(selfUpdateLockPath(dir), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadUpdateAttempt(dir); ok {
+		t.Fatal("attempt record present, want none for this scenario")
+	}
+	env := renderEnv{version: "0.4.8", stateDir: dir, nowUnix: nowFunc().Unix(), autoUpdate: "patch"}
+
+	renderVersion(nil, Segment{Type: "version", CheckUpdate: true}, env)
+	if *called {
+		t.Error("spawnSelfUpdate called while an unexpired marker is on disk")
 	}
 }

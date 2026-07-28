@@ -357,3 +357,24 @@ func TestWriteUpdateAttemptSuccessClearsBlock(t *testing.T) {
 		t.Errorf("Blocked = %q, want empty", got.Blocked)
 	}
 }
+
+func TestAutoUpdateCeiling(t *testing.T) {
+	tests := []struct {
+		in   string
+		want Severity
+		ok   bool
+	}{
+		{"patch", SeverityPatch, true},
+		{"minor", SeverityMinor, true},
+		{"major", SeverityMajorFar, true},
+		{"", SeverityNone, false},
+		{"PATCH", SeverityNone, false},
+		{"everything", SeverityNone, false},
+	}
+	for _, tt := range tests {
+		got, ok := autoUpdateCeiling(tt.in)
+		if ok != tt.ok || got != tt.want {
+			t.Errorf("autoUpdateCeiling(%q) = (%v, %v), want (%v, %v)", tt.in, got, ok, tt.want, tt.ok)
+		}
+	}
+}

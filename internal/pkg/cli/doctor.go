@@ -211,6 +211,9 @@ func runDoctor(p Paths, stdout io.Writer) error {
 	if diag := updateDiagnostic(blocked); diag != "" {
 		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
 	}
+	if diag := autoUpdateDiagnostic(cfg.Update.Auto); diag != "" {
+		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
+	}
 	return nil
 }
 
@@ -237,5 +240,19 @@ func updateDiagnostic(reason render.BlockReason) string {
 		return "self-update: blocked (target directory not writable — reinstall with the privileges that own it; ccsb never elevates by itself)"
 	default:
 		return fmt.Sprintf("self-update: blocked (%s)", reason)
+	}
+}
+
+// autoUpdateDiagnostic reports an update.auto value ccsb does not
+// understand, or "" when the value is valid or absent. An unrecognised
+// value disables automatic updating, and the renderer says nothing about it
+// — so without this line a typo would look exactly like a deliberate
+// opt-out.
+func autoUpdateDiagnostic(auto string) string {
+	switch auto {
+	case "", "patch", "minor", "major":
+		return ""
+	default:
+		return fmt.Sprintf("update.auto: %q is not one of patch, minor, major — automatic updating is off", auto)
 	}
 }

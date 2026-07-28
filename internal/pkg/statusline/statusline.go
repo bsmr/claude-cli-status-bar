@@ -48,6 +48,9 @@ type Options struct {
 	// as the cache root for the "git_dirty" segment. Empty suppresses that
 	// segment.
 	StateDir string
+	// AutoUpdate is the user's update.auto preference, forwarded to the
+	// render package. Empty disables automatic updating.
+	AutoUpdate string
 }
 
 type payload struct {
@@ -148,11 +151,12 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 			cwd = p.Workspace.ProjectDir
 		}
 		rendered, rerr := render.Render(render.Options{
-			Config:   opts.Render,
-			Cwd:      cwd,
-			NoColor:  opts.NoColor,
-			Version:  opts.Version,
-			StateDir: opts.StateDir,
+			Config:     opts.Render,
+			Cwd:        cwd,
+			NoColor:    opts.NoColor,
+			Version:    opts.Version,
+			StateDir:   opts.StateDir,
+			AutoUpdate: opts.AutoUpdate,
 		}, raw)
 		if rerr != nil {
 			runErr = fmt.Errorf("statusline: render: %w", rerr)

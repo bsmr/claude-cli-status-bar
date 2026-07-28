@@ -10,11 +10,13 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.9` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.10` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
-> added the `ccsb update` self-updater and its `⊘` blocked indicator).
+> added the `ccsb update` self-updater and its `⊘` blocked indicator;
+> `0.4.10` added the opt-in `update.auto` config block that lets the
+> renderer run `ccsb update` for you).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -86,6 +88,8 @@ for compatibility with existing setups (see [Background](#background)).
   carried VCS metadata that `ccsb update` reads as a local build and
   refuses to overwrite, so they cannot update themselves. Swap the binary
   by hand once and self-update works from then on.
+  Set `{"update": {"auto": "patch"}}` in the config to let ccsb install
+  matching releases by itself; it is off unless you say so.
 
 ## Install
 

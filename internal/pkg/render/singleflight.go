@@ -2,7 +2,8 @@
 //
 // singleflight.go holds the on-disk single-flight marker primitives shared
 // by every out-of-band refresher in this package (git_dirty, version's
-// update check): acquireLock/releaseLock, keyed on a caller-supplied path.
+// update check, version's auto-update spawn): acquireLock/releaseLock,
+// keyed on a caller-supplied path.
 package render
 
 import (

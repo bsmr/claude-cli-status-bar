@@ -18,9 +18,12 @@ import (
 const modulePath = "go.muehmer.eu/claude-cli-status-bar/cmd/ccsb"
 
 // goInstallTimeout bounds the toolchain run. A cold module cache plus
-// compilation is slow, but this stays below the 10 minute single-flight lock
-// TTL used by the 0.4.9 auto-update trigger, so a hung build cannot outlive
-// its own marker.
+// compilation is slow, but this stays well below the single-flight lock TTL
+// the 0.4.10 auto-update trigger uses — the update-check interval, 24h by
+// default — so a hung build cannot outlive its own marker. That holds at the
+// default only: the interval is user-tunable, and any value below this
+// timeout lets the marker expire mid-build, allowing a second `go install`
+// to start alongside the first.
 const goInstallTimeout = 5 * time.Minute
 
 // goBinDir reports where `go install` places binaries. The environment is

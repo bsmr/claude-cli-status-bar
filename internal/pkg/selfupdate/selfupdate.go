@@ -2,7 +2,7 @@
 // GitHub release.
 //
 // It never runs on the render path. `ccsb update` invokes it directly; from
-// 0.4.9 the renderer may start that subcommand detached, but always as a
+// 0.4.10 the renderer may start that subcommand detached, but always as a
 // separate process — this package is never imported by internal/pkg/render,
 // which is what keeps the dependency on render one-way.
 package selfupdate
@@ -177,7 +177,7 @@ var latestReleaseURL = render.LatestReleaseURL
 //
 // Every exit path stamps the attempt record — success, guard refusal and
 // mid-run failure alike. Without a stamp on failure, a permanently failing
-// update would leave the version segment's severity raised and, from 0.4.9
+// update would leave the version segment's severity raised and, from 0.4.10
 // on, spawn a fresh attempt on every render past the lock TTL.
 func Update(ctx context.Context, o Options) error {
 	err := update(ctx, o)

@@ -298,3 +298,24 @@ func WriteUpdateAttempt(stateDir string, blocked BlockReason) error {
 	}
 	return fileutil.WriteAtomic(UpdateAttemptPath(stateDir), blob)
 }
+
+// autoUpdateCeiling maps a config.Update.Auto value to the highest severity
+// that may be installed without being asked. ok is false for anything
+// unrecognised — including the empty string and any different casing —
+// which disables automatic updating. Opt-in means only an exact, deliberate
+// value switches it on.
+//
+// "major" maps to SeverityMajorFar, the highest rung: a user who accepts
+// major upgrades accepts being several majors behind as well.
+func autoUpdateCeiling(v string) (Severity, bool) {
+	switch v {
+	case "patch":
+		return SeverityPatch, true
+	case "minor":
+		return SeverityMinor, true
+	case "major":
+		return SeverityMajorFar, true
+	default:
+		return SeverityNone, false
+	}
+}

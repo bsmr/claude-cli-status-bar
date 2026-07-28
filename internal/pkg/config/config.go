@@ -1,12 +1,14 @@
 // Package config persists ccsb's user-editable configuration as JSON at
 // $XDG_CONFIG_HOME/ccsb/config.json (with $HOME/.config/ccsb fallback).
 //
-// The config holds two things:
+// The config holds four things:
 //
 //   - the proxied statusLine command and its arguments;
 //   - a verbatim backup of the original "statusLine" value from
 //     ~/.claude/settings.json, captured at install time so uninstall can
-//     restore it byte-for-byte.
+//     restore it byte-for-byte;
+//   - the renderer's segment/row layout;
+//   - the self-update preferences.
 //
 // Writes are atomic (temp file + rename); reads of a missing file return a
 // zero Config and no error so callers can treat absence as default state.
@@ -29,6 +31,7 @@ type Config struct {
 	Proxy  Proxy         `json:"proxy,omitzero"`
 	Backup Backup        `json:"backup,omitzero"`
 	Render render.Config `json:"render,omitzero"`
+	Update Update        `json:"update,omitzero"`
 }
 
 // Proxy describes the external statusLine implementation that ccsb forwards
@@ -44,6 +47,15 @@ type Backup struct {
 	// ~/.claude/settings.json before install. Stored as raw JSON so any
 	// shape (string, object, missing) round-trips exactly.
 	PreviousStatusLine json.RawMessage `json:"previous_status_line,omitempty"`
+}
+
+// Update holds the self-update preferences.
+type Update struct {
+	// Auto is the highest jump the renderer may install without being
+	// asked: "patch", "minor" or "major". Absent, empty or unrecognised
+	// disables automatic updating entirely — opt-in is the whole point, so
+	// the zero value must do nothing.
+	Auto string `json:"auto,omitempty"`
 }
 
 // DefaultPath resolves the default config path.
