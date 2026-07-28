@@ -176,3 +176,64 @@ func TestSaveLoadRoundtrip_PreservesRenderConfig(t *testing.T) {
 		t.Errorf("roundtrip mismatch:\n got %+v\nwant %+v", out, in)
 	}
 }
+
+func TestLoadUpdateAuto(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	raw := `{"update":{"auto":"patch"},"proxy":{"command":"foo"}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Update.Auto != "patch" {
+		t.Errorf("Update.Auto = %q, want %q", c.Update.Auto, "patch")
+	}
+	if c.Proxy.Command != "foo" {
+		t.Errorf("Proxy.Command = %q — the update block must not disturb siblings", c.Proxy.Command)
+	}
+}
+
+func TestUpdateAutoRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Config{Update: config.Update{Auto: "minor"}}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Update.Auto != "minor" {
+		t.Errorf("Update.Auto = %q after round-trip, want %q", c.Update.Auto, "minor")
+	}
+}
+
+// An absent update block must stay absent on save — opt-in means an
+// untouched config gains no new keys.
+func TestUpdateBlockOmittedWhenEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Config{Proxy: config.Proxy{Command: "foo"}}); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unmarshal into a key/value map: the exact-key check catches the
+	// ordinary regression with a precise message, and the case-insensitive
+	// walk also catches a dropped/mistyped `omitzero` tag, which would
+	// serialize the field as "Update" instead of "update".
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(blob, &fields); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := fields["update"]; ok {
+		t.Errorf("saved config has an \"update\" key:\n%s", blob)
+	}
+	for k := range fields {
+		if strings.EqualFold(k, "update") {
+			t.Errorf("saved config has key %q — check the json tag:\n%s", k, blob)
+		}
+	}
+}

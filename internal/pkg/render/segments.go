@@ -534,7 +534,7 @@ func renderVersion(_ *payload, s Segment, env renderEnv) string {
 }
 
 // buildInfoFunc reads this binary's build info; goosFunc reports the target
-// OS. Package variables so tests can drive updateBlocked: a test binary is
+// OS. Package variables so tests can drive readUpdateStatus: a test binary is
 // always a local build, so the real ReadBuildInfo would report every test as
 // blocked. Production code never reassigns them.
 var (
@@ -579,8 +579,8 @@ func renderUpdateSuffix(s Segment, env renderEnv) string {
 	if !ok {
 		return ""
 	}
-	// Compute severity and bail out before touching updateBlocked: Go
-	// evaluates call arguments eagerly, so inlining updateBlocked(...) into
+	// Compute severity and bail out before touching readUpdateStatus: Go
+	// evaluates call arguments eagerly, so inlining readUpdateStatus(...) into
 	// the updateSeverityStyle call below would read update-attempt.json on
 	// every render, even for the overwhelmingly common SeverityNone case
 	// (already up to date) where the result is immediately discarded. Do
@@ -589,7 +589,9 @@ func renderUpdateSuffix(s Segment, env renderEnv) string {
 	if sev == SeverityNone {
 		return ""
 	}
-	glyph, fg := updateSeverityStyle(s, sev, updateBlocked(env.stateDir))
+	st := readUpdateStatus(env.stateDir)
+	maybeSpawnSelfUpdate(s, env, sev, st)
+	glyph, fg := updateSeverityStyle(s, sev, st.blocked)
 	text := fmt.Sprintf("%s v%d.%d.%d", glyph, latest.Major, latest.Minor, latest.Patch)
 	return wrapPart(text, fg, s.FG, env.colorEnabled)
 }
@@ -599,27 +601,45 @@ func renderUpdateSuffix(s Segment, env renderEnv) string {
 // so it can be looked up in the documentation and in `ccsb doctor`.
 const updateBlockedGlyph = "⊘"
 
-// updateBlocked reports whether a self-update is impossible here. Probes in
-// cost order and never touches the network or tests filesystem permissions:
-// the two in-process checks answer immediately, and the attempt record is a
-// file this package reads anyway.
+// updateStatus is what the version segment needs from the self-update
+// bookkeeping. Both fields come from a single read of the attempt record,
+// so one segment render never opens it twice. The read is cheap and
+// idempotent, which is what makes that bound good enough: a single Render
+// can run the segment functions more than once (applyShrink measures a row
+// by rendering it), so the file may be read once per pass.
+type updateStatus struct {
+	// blocked reports that a detected update cannot be applied here.
+	blocked bool
+	// lastAttempt is the Unix time of the last `ccsb update` exit, or 0
+	// when none is on record. It is the auto-update backoff.
+	lastAttempt int64
+}
+
+// readUpdateStatus reports whether a self-update is impossible here and when
+// one was last attempted. Probes in cost order and never touches the network
+// or tests filesystem permissions: the two in-process checks answer
+// immediately, and the attempt record is a file this package reads anyway.
 //
 // Consequence worth knowing: the not-writable case only surfaces after an
 // update has actually been attempted once. Detecting it earlier would mean
-// probing the filesystem during a render, which this project does not do.
-func updateBlocked(stateDir string) bool {
+// probing the filesystem during a render, which this project does not do —
+// `ccsb doctor` runs the guards directly and reports it right away.
+func readUpdateStatus(stateDir string) updateStatus {
 	if goosFunc() == "windows" {
-		return true
+		return updateStatus{blocked: true}
 	}
 	if info, ok := buildInfoFunc(); ok && info != nil {
 		for _, s := range info.Settings {
 			if s.Key == "vcs.revision" && s.Value != "" {
-				return true
+				return updateStatus{blocked: true}
 			}
 		}
 	}
 	att, ok := ReadUpdateAttempt(stateDir)
-	return ok && att.Blocked != BlockNone
+	if !ok {
+		return updateStatus{}
+	}
+	return updateStatus{blocked: att.Blocked != BlockNone, lastAttempt: att.Unix}
 }
 
 // updateSeverityStyle maps a Severity to its glyph and foreground color.
@@ -668,6 +688,84 @@ var spawnUpdateCheckRefresh = func() bool {
 	}
 	_ = cmd.Process.Release()
 	return true
+}
+
+// selfUpdateLockPath returns the single-flight marker guarding the
+// auto-update spawn — a sibling of the attempt record it gates.
+func selfUpdateLockPath(stateDir string) string {
+	return UpdateAttemptPath(stateDir) + ".pending"
+}
+
+// spawnSelfUpdate re-executes ccsb as `ccsb update` and returns immediately
+// without waiting, mirroring spawnUpdateCheckRefresh. Output is detached
+// rather than suppressed by a flag: nothing reads it, and the CLI surface
+// stays smaller. Every failure is silent by design — an update that cannot
+// start simply leaves the version segment as it is, and the caller ignores
+// the reported result on purpose (see maybeSpawnSelfUpdate). Overridable so
+// tests can observe the trigger without starting processes.
+var spawnSelfUpdate = func() bool {
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command(self, "update")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	_ = cmd.Process.Release()
+	return true
+}
+
+// maybeSpawnSelfUpdate starts a detached `ccsb update` when the user opted
+// in, the jump is within their ceiling, nothing blocks it here, and the
+// backoff has elapsed.
+//
+// The backoff reads the attempt record's timestamp — stamped on every exit
+// of `ccsb update`, success and failure alike. Without it a permanently
+// failing update would restart on every render once the lock aged out,
+// because the failure leaves the severity raised. Reusing the update-check
+// interval means a failure ages out exactly like an ordinary check instead
+// of getting its own special path.
+//
+// The single-flight marker carries that same backoff as its TTL, which is
+// what covers the case the attempt record cannot: a child killed before it
+// returns (SIGKILL, a reboot, the user quitting Claude Code mid-`go
+// install`) never stamps anything, and a disk-full write error is discarded
+// because the detached child has no stderr. With a shorter marker TTL those
+// children would recompile from source every time it aged out, forever.
+// Giving the marker the backoff's lifetime makes it the fallback backoff,
+// with identical timing: a child that dies silently cannot retry any sooner
+// than one that succeeded.
+//
+// The blocked check runs before the spawn, not inside the child: otherwise a
+// local build would start a process every interval only for it to hit the
+// guard immediately.
+func maybeSpawnSelfUpdate(s Segment, env renderEnv, sev Severity, st updateStatus) {
+	ceiling, ok := autoUpdateCeiling(env.autoUpdate)
+	if !ok || sev > ceiling || st.blocked {
+		return
+	}
+	backoff := parseUpdateCheckInterval(s.UpdateCheckInterval)
+	// age >= 0 deliberately fails open: a record stamped in the future, i.e.
+	// a backwards clock jump, bypasses the backoff instead of holding it for
+	// however long the skew lasts. A wrong clock must not be able to disable
+	// auto-update permanently.
+	if age := env.nowUnix - st.lastAttempt; st.lastAttempt != 0 && age >= 0 && age < int64(backoff.Seconds()) {
+		return
+	}
+	if !acquireLock(selfUpdateLockPath(env.stateDir), backoff) {
+		return
+	}
+	// The marker is left in place whatever the spawn reports. On success
+	// `ccsb update` does not clear it either — the attempt record it writes
+	// is the real brake, and the marker simply ages out via its TTL, which
+	// keeps the child free of any coupling to the renderer's locking. On
+	// failure it must stand for the same reason: an exec.Start that fails
+	// almost always fails again immediately, and releasing here would let
+	// the very same render retry it, because one Render can render a segment
+	// more than once (applyShrink measures a row by rendering it).
+	spawnSelfUpdate()
 }
 
 // renderSchemaHealth emits a single skull glyph (☠ U+2620) when

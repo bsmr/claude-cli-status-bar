@@ -19,7 +19,8 @@ every field).
 {
   "proxy":  { "command": "npx", "args": ["-y", "ccstatusline@latest"] },
   "backup": { "previous_status_line": { /* … */ } },
-  "render": { "rows": [ /* … */ ], "separator": " | " }
+  "render": { "rows": [ /* … */ ], "separator": " | " },
+  "update": { "auto": "patch" }
 }
 ```
 
@@ -28,8 +29,9 @@ every field).
 | `proxy`  | When `proxy.command` is non-empty, ccsb forwards the payload to that child process and prints its stdout. When empty (or the key is absent), the in-binary native renderer drives the status line. Toggle with `ccsb mode native` / `ccsb mode proxy`. |
 | `backup` | Holds the verbatim `statusLine` value that was in `~/.claude/settings.json` at install time, so `ccsb uninstall` can restore it. Never written by `ccsb mode`. |
 | `render` | Native-renderer config. Ignored while proxy mode is active. |
+| `update` | Opt-in self-update preferences. Absent (the default) means ccsb never installs an update by itself. See [`update`](#update). |
 
-All three keys are optional. With every key omitted, ccsb runs the native
+All four keys are optional. With every key omitted, ccsb runs the native
 renderer with the default layout.
 
 ## `render`
@@ -273,6 +275,55 @@ three styles:
   the segment's bg colour.
 
 Unknown `cap_style` values fall back to `"round"`.
+
+## `update`
+
+A top-level block, sibling to `render` and `proxy`:
+
+```json
+{ "update": { "auto": "patch" } }
+```
+
+`auto` is the largest version jump ccsb may install by itself:
+
+| Value | Installs automatically |
+|---|---|
+| `patch` | `0.4.8` → `0.4.9` |
+| `minor` | also `0.4.8` → `0.5.0` |
+| `major` | also `0.4.8` → `1.0.0` and beyond |
+
+Each value is a ceiling, not an exact match — `minor` also covers a patch
+jump, `major` also covers a minor or patch jump.
+
+Absent, empty, or any other **string** — including a different
+capitalisation such as `"PATCH"` — disables automatic updating entirely;
+`ccsb update` remains available by hand. `ccsb doctor` names a value it does
+not recognise, since the renderer stays silent about it. A non-string value
+(`{"update": {"auto": true}}`) is not "anything else" but a config parse
+error, exactly like a wrongly typed value anywhere else in this file: the
+config fails to load and the whole status bar goes blank.
+
+The trigger lives in the `version` segment, so it only fires from a layout
+that actually renders one with `"check_update": true` — and only when a
+state directory is resolvable. The default layout satisfies both. A custom
+`rows` block without such a segment (the kind the `ccsb-wizard` skill
+produces) silently makes `update.auto` inert; nothing warns about it.
+
+When enabled, the renderer starts a detached `ccsb update` at most once per
+[`update_check_interval`](#version) (24h by default) — the same interval
+that gates the version segment's own background release check — and only
+when the pending jump is within the configured ceiling and nothing already
+known would make the update fail here (Windows, a binary built from a
+local checkout, or a target directory that a prior attempt found
+unwritable). A failed attempt still resets that clock, so a persistently
+failing update is retried at most once per interval, not on every render.
+
+The clock is the timestamp in `$XDG_STATE_HOME/ccsb/update-attempt.json`,
+which `ccsb update` stamps on every exit. A single-flight marker beside it
+(`update-attempt.json.pending`) carries the same interval as its lifetime,
+which covers the case the record cannot: an update killed before it returns
+— a reboot, or quitting Claude Code during a from-source build — stamps
+nothing, and without the marker would restart on the next render.
 
 ## Segments
 

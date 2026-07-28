@@ -150,6 +150,7 @@ func runProxy(ctx context.Context, p Paths, f Flags, stdin io.Reader, stdout, st
 		Render:       cfg.Render,
 		NoColor:      f.NoColor,
 		Version:      Version,
+		AutoUpdate:   cfg.Update.Auto,
 	}, stdin, stdout, stderr)
 }
 
