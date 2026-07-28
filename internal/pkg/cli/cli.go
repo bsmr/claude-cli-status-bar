@@ -231,10 +231,17 @@ func runInstall(p Paths, stdout io.Writer) error {
 	}
 	claudesettings.SetStatusLine(s, sl)
 
-	if err := claudesettings.Save(p.Settings, s); err != nil {
+	// Order matters: the backup is the only copy of the statusLine this
+	// install is about to overwrite, so it has to reach disk first. If
+	// config.Save fails we abort with settings.json untouched — a recoverable
+	// state. The reverse order loses the user's original command for good,
+	// and the later uninstall would delete the key instead of restoring it.
+	// A backup written without settings.json being hooked is harmless: it is
+	// exactly the state the first-install guard above already tolerates.
+	if err := config.Save(p.Config, cfg); err != nil {
 		return err
 	}
-	if err := config.Save(p.Config, cfg); err != nil {
+	if err := claudesettings.Save(p.Settings, s); err != nil {
 		return err
 	}
 
@@ -338,7 +345,11 @@ Subcommands:
               given command and arguments.
   config      "config reset" moves the existing config.json aside (as a
               timestamped .bak file) so the next run picks up the in-code
-              defaults. The only verb today; a no-op when no config exists.
+              defaults. The uninstall backup of your previous statusLine is
+              carried over rather than reset — it is state ccsb owes you
+              back, not a setting. The only verb today; a no-op when no
+              config exists, and it still works on a config too broken
+              to parse.
   captures    "captures clean" removes capture files (.json payloads, .out
               rendered output, plus any .err and .diag siblings).
               Without arguments it empties the capture directory; with

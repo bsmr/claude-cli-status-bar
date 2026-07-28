@@ -294,6 +294,138 @@ func TestInstall_KeepsOriginalBackupWhenSettingsWereRepointedExternally(t *testi
 	}
 }
 
+// The backup is the only copy of the statusLine install is about to
+// overwrite, so it must reach disk BEFORE settings.json is rewritten. With
+// the writes in the other order a failing config.Save leaves settings.json
+// already pointing at ccsb and the user's original command nowhere on disk —
+// and the later uninstall then deletes the key instead of restoring it.
+func TestInstall_LeavesSettingsUntouchedWhenBackupCannotBePersisted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	e := newEnv(t)
+	const original = `{"statusLine":{"type":"command","command":"npx -y my-precious-bar"},"theme":"dark"}`
+	e.writeSettings(t, original)
+
+	// Only the write may fail: the directory stays readable so config.Load
+	// still succeeds (missing file => zero config) and install gets far
+	// enough to attempt both writes.
+	cfgDir := filepath.Join(filepath.Dir(e.paths.Config), "cfgdir")
+	if err := os.Mkdir(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	e.paths.Config = filepath.Join(cfgDir, "ccsb-config.json")
+	if err := os.Chmod(cfgDir, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0o700) })
+
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err == nil {
+		t.Fatal("install must fail when the backup cannot be persisted")
+	}
+
+	got, err := os.ReadFile(e.paths.Settings)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if string(got) != original {
+		t.Errorf("settings.json must be untouched when the backup write fails:\ngot:  %s\nwant: %s", got, original)
+	}
+}
+
+// `ccsb config reset` restores the in-code defaults, but
+// backup.previous_status_line is not a setting — it is the only copy of the
+// statusLine ccsb displaced and owes the user back. Renaming the whole config
+// file away takes that copy with it, so the later uninstall falls into the
+// "no previous" branch and deletes statusLine instead of restoring it.
+func TestConfigReset_PreservesUninstallBackup(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"npx -y my-precious-bar"},"theme":"dark"}`)
+
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	want := e.loadConfig(t).Backup.PreviousStatusLine
+	if len(want) == 0 {
+		t.Fatal("install recorded no backup")
+	}
+
+	// A genuine setting that reset MUST clear, so "just keep the old file"
+	// cannot pass this test.
+	cfg := e.loadConfig(t)
+	cfg.Proxy.Command = "some-proxy"
+	e.saveConfig(t, cfg)
+
+	buf.Reset()
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"config", "reset"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("config reset: %v", err)
+	}
+
+	after := e.loadConfig(t)
+	if after.Proxy.Command != "" {
+		t.Errorf("config reset must clear settings: proxy.command = %q, want empty", after.Proxy.Command)
+	}
+	if !bytes.Equal(after.Backup.PreviousStatusLine, want) {
+		t.Fatalf("backup must survive config reset:\ngot:  %s\nwant: %s", after.Backup.PreviousStatusLine, want)
+	}
+
+	buf.Reset()
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"uninstall"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	got, ok := claudesettings.GetStatusLine(e.loadSettings(t))
+	if !ok {
+		t.Fatal("uninstall deleted statusLine instead of restoring the backup")
+	}
+	// Compared as JSON, not as bytes: config.Save marshals with
+	// MarshalIndent, which re-indents an embedded json.RawMessage on every
+	// write, so carrying the backup through the extra save/load cycle reset
+	// now performs changes its whitespace. The value is what uninstall owes
+	// the user; the surrounding indentation is not. (The separate claim that
+	// this round-trip is "byte-for-byte" — config/config.go:7-9, README.md:63
+	// — is inaccurate for that reason and for HTML-escaping of & < >; that is
+	// a documentation fix of its own, not this one.)
+	if !jsonEqual(t, got, want) {
+		t.Errorf("restored statusLine: got %s, want %s", got, want)
+	}
+}
+
+// jsonEqual reports whether a and b are the same JSON value, ignoring
+// insignificant whitespace.
+func jsonEqual(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var ca, cb bytes.Buffer
+	if err := json.Compact(&ca, a); err != nil {
+		t.Fatalf("compact a: %v", err)
+	}
+	if err := json.Compact(&cb, b); err != nil {
+		t.Fatalf("compact b: %v", err)
+	}
+	return bytes.Equal(ca.Bytes(), cb.Bytes())
+}
+
+// A config too broken to parse is precisely when reset is needed: a wrongly
+// shaped render.palette, say, is a hard unmarshal error that blanks the whole
+// bar, and moving the file aside is the documented way out. Reading the
+// backup out first must therefore not turn a parse failure into a refusal —
+// there is simply no backup to carry over in that case.
+func TestConfigReset_WorksOnUnparsableConfig(t *testing.T) {
+	e := newEnv(t)
+	if err := os.WriteFile(e.paths.Config, []byte(`{"render":{"palette":{"bad":"shape"}}}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"config", "reset"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("config reset must succeed on an unparsable config: %v", err)
+	}
+	if _, err := os.Stat(e.paths.Config); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("config must have been moved aside (stat err: %v)", err)
+	}
+}
+
 // Hidden refresh-git-dirty subcommand: the wiring the renderer's detached
 // refresher invokes. Exercised without a real repository — nearestGitDir is
 // pure filesystem walking, so every branch is reachable git-free.
