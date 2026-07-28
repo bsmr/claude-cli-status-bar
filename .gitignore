@@ -47,3 +47,7 @@ docs/superpowers/
 # Local git worktrees (superpowers:using-git-worktrees)
 /.worktrees/
 
+# GoReleaser output — `goreleaser release --snapshot` (see .goreleaser.yaml)
+# drops ~30 MB of archives here on every local validation run.
+/dist/
+
