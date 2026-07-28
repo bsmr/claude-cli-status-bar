@@ -10,13 +10,14 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.10` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.11` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
 > added the `ccsb update` self-updater and its `⊘` blocked indicator;
 > `0.4.10` added the opt-in `update.auto` config block that lets the
-> renderer run `ccsb update` for you).
+> renderer run `ccsb update` for you; `0.4.11` closed two paths that could
+> destroy the statusLine ccsb had promised to restore).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -69,7 +70,9 @@ for compatibility with existing setups (see [Background](#background)).
   same command the install heuristic recognises, for symmetry);
   `ccsb mode` prints the active mode; `ccsb config reset` moves the
   user config aside (timestamped backup) so the next run picks up
-  the in-code defaults.
+  the in-code defaults, while carrying over the uninstall backup of
+  your previous statusLine — that is state ccsb owes you back, not a
+  setting to reset.
 - **Proxy mode (compatibility)** — when a proxy command is configured,
   ccsb forwards the stdin payload to it and prints its stdout verbatim.
   Useful for setups that already have a different statusLine renderer in
@@ -152,6 +155,7 @@ ccsb mode         # print current mode (native or proxy)
 ccsb mode native  # clear proxy block so the native renderer drives ccsb
 ccsb mode proxy   # restore proxy mode (default: npx -y ccstatusline@latest)
 ccsb config reset # move config.json aside (timestamped backup); defaults apply
+                  # (the uninstall backup is carried over, not reset)
 ccsb captures clean               # remove captured payloads and output
 ccsb captures clean --older-than 7d  # ... keeping anything newer
 ccsb status       # print resolved paths, hook state, mode, proxy/backup

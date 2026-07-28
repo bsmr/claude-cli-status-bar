@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
 )
 
 // runConfig dispatches the `ccsb config <verb>` subcommand. Only verb so
@@ -41,11 +43,28 @@ func runConfigReset(p Paths, stdout io.Writer) error {
 		}
 		return fmt.Errorf("ccsb: stat config: %w", err)
 	}
+	// backup.previous_status_line is not a setting: it is the only copy of
+	// the statusLine ccsb displaced at install time and owes the user back on
+	// uninstall. Reset restores default *settings*, so that value has to be
+	// read out before the file moves and carried into the fresh config —
+	// otherwise uninstall falls into its "no previous" branch and deletes the
+	// user's statusLine instead of restoring it.
+	// A load failure must not block the reset: a config too broken to parse
+	// is exactly when the user needs it moved aside, and then there is simply
+	// no backup to carry over. The unreadable original stays recoverable in
+	// the timestamped .bak file either way.
+	cfg, loadErr := config.Load(p.Config)
+
 	// RFC3339Nano makes the timestamp sortable and unambiguous; UTC
 	// removes the local-timezone surprise when reading backups later.
 	backupPath := p.Config + ".bak." + time.Now().UTC().Format(time.RFC3339Nano)
 	if err := os.Rename(p.Config, backupPath); err != nil {
 		return fmt.Errorf("ccsb: backup config: %w", err)
+	}
+	if loadErr == nil && len(cfg.Backup.PreviousStatusLine) > 0 {
+		if err := config.Save(p.Config, config.Config{Backup: cfg.Backup}); err != nil {
+			return fmt.Errorf("ccsb: preserve uninstall backup: %w", err)
+		}
 	}
 	fmt.Fprintf(stdout, "ccsb: backed up previous config to %s\n", backupPath)
 	fmt.Fprintf(stdout, "ccsb: config reset; defaults will apply on next invocation\n")
