@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.11` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.14` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -20,7 +20,8 @@ for compatibility with existing setups (see [Background](#background)).
 > destroy the statusLine ccsb had promised to restore; `0.4.12` stopped
 > `ccsb doctor` from deleting a proxy command it only failed to resolve;
 > `0.4.13` corrected the `ccsb-wizard` skill against the real config schema
-> and added tests that keep it there).
+> and added tests that keep it there; `0.4.14` made `ccsb doctor` report an
+> installed skill copy that no longer matches the binary).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -163,7 +164,8 @@ ccsb config reset # move config.json aside (timestamped backup); defaults apply
 ccsb captures clean               # remove captured payloads and output
 ccsb captures clean --older-than 7d  # ... keeping anything newer
 ccsb status       # print resolved paths, hook state, mode, proxy/backup
-ccsb doctor       # diagnose and auto-fix install/proxy problems, check schema drift
+ccsb doctor       # diagnose and auto-fix install/proxy problems, check schema drift,
+                  # report a stale ccsb-wizard skill copy
 ccsb update       # replace this binary with the newest GitHub release
 ccsb install-skill   # install the ccsb-wizard configuration skill
 ccsb uninstall-skill # remove it again
@@ -207,8 +209,15 @@ an interactive configuration dialogue. Claude reads your current config, checks
 your NerdFont setup, and adjusts the display through natural-language questions.
 
 Re-run `ccsb install-skill` after updating ccsb to get the latest skill version.
+The installed file is a *copy*, so updating ccsb never updates it on its own —
+`ccsb doctor` reports when yours no longer matches the binary, and leaves it
+alone otherwise (it is in your skills directory, and you may have edited it).
+Keeping it current matters: 0.4.13 corrected wizard guidance that could leave
+you with no status bar at all.
+
 Installs before 0.4.6 wrote a flat `ccsb-wizard.md` that Claude Code never
-recognised as a skill; re-running removes that leftover automatically.
+recognised as a skill; re-running removes that leftover automatically, and
+doctor points it out if one is still lying around.
 
 To remove:
 

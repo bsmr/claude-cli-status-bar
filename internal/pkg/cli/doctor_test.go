@@ -290,3 +290,76 @@ func TestAutoUpdateDiagnostic(t *testing.T) {
 		}
 	}
 }
+
+// The wizard asset ships inside the binary, but `ccsb install-skill` writes a
+// COPY into ~/.claude/skills/. Updating ccsb therefore does not update an
+// already-installed skill: v0.4.13 corrected guidance that could blank the
+// user's status bar, and every prior installation kept serving the dangerous
+// version with nothing to indicate it. doctor is where that gets noticed.
+func TestSkillDiagnostic(t *testing.T) {
+	embedded := WizardSkillContent()
+
+	tests := []struct {
+		name    string
+		write   func(t *testing.T, current, legacy string)
+		wantSub string // "" means: report nothing
+	}{
+		{
+			name:  "not installed is not a problem",
+			write: func(*testing.T, string, string) {},
+		},
+		{
+			name: "up to date",
+			write: func(t *testing.T, current, _ string) {
+				writeSkillFile(t, current, embedded)
+			},
+		},
+		{
+			name: "stale copy",
+			write: func(t *testing.T, current, _ string) {
+				writeSkillFile(t, current, []byte("# an older ccsb-wizard\n"))
+			},
+			wantSub: "differs from this binary",
+		},
+		{
+			name: "legacy flat file left behind",
+			write: func(t *testing.T, current, legacy string) {
+				writeSkillFile(t, current, embedded)
+				writeSkillFile(t, legacy, embedded)
+			},
+			wantSub: "legacy",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Paths{ClaudeSkillsDir: filepath.Join(t.TempDir(), "skills")}
+			current, legacy := skillPaths(p)
+			tc.write(t, current, legacy)
+
+			got := skillDiagnostic(p)
+			if tc.wantSub == "" {
+				if got != "" {
+					t.Errorf("expected no diagnostic, got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.wantSub) {
+				t.Errorf("diagnostic %q does not mention %q", got, tc.wantSub)
+			}
+			if !strings.Contains(got, "install-skill") {
+				t.Errorf("diagnostic %q does not name the fix (install-skill)", got)
+			}
+		})
+	}
+}
+
+func writeSkillFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
