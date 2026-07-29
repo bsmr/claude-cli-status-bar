@@ -10,6 +10,12 @@
 //   - the renderer's segment/row layout;
 //   - the self-update preferences.
 //
+// Any OTHER top-level key survives the round trip untouched (see
+// Config.unknown), because the file is the user's and every rewrite here is
+// a side effect of doing something else. Note the cost: a config carrying
+// such a key comes back with its top-level keys alphabetised, since the
+// merge goes through a map.
+//
 // Writes are atomic (temp file + rename); reads of a missing file return a
 // zero Config and no error so callers can treat absence as default state.
 package config
@@ -21,6 +27,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"time"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/fileutil"
@@ -33,6 +41,38 @@ type Config struct {
 	Backup Backup        `json:"backup,omitzero"`
 	Render render.Config `json:"render,omitzero"`
 	Update Update        `json:"update,omitzero"`
+
+	// unknown holds the top-level keys this binary does not model, captured
+	// by Load and written back by Save so that rewriting the file cannot
+	// delete them. config.json belongs to the user, and `install`, `mode` and
+	// `doctor` all rewrite it as a side effect of doing something else.
+	//
+	// The loss this prevents is version skew rather than exotic hand-editing:
+	// an older ccsb running `ccsb mode native` over a config a newer one
+	// wrote used to silently drop the block it had never heard of — this is
+	// how a 0.4.14 binary would have eaten 0.4.15's proxy.timeout.
+	//
+	// It rides on the loaded value on purpose, rather than Save re-reading
+	// the file: `ccsb config reset` builds a fresh Config carrying only the
+	// uninstall backup, and must NOT resurrect what it just moved aside to
+	// .bak. Unexported so no caller outside this package can forge it.
+	unknown map[string]json.RawMessage
+}
+
+// modelledKeys returns the top-level JSON keys Config itself represents.
+// Derived by reflection rather than listed, so adding a field to Config
+// cannot leave a stale list behind and have Load file the new key as
+// unknown — which would then shadow the struct's own value on Save.
+func modelledKeys() []string {
+	t := reflect.TypeFor[Config]()
+	keys := make([]string, 0, t.NumField())
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			keys = append(keys, name)
+		}
+	}
+	return keys
 }
 
 // Proxy describes the external statusLine implementation that ccsb forwards
@@ -127,6 +167,18 @@ func Load(path string) (Config, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
 	}
+	// Second pass for the keys the struct does not model — see Config.unknown.
+	// The unmarshal above already rejected anything that is not a JSON object,
+	// so this one cannot fail on input the caller is allowed to see.
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(data, &all); err == nil {
+		for _, k := range modelledKeys() {
+			delete(all, k)
+		}
+		if len(all) > 0 {
+			c.unknown = all
+		}
+	}
 	return c, nil
 }
 
@@ -137,13 +189,50 @@ func Save(path string, c Config) error {
 	if path == "" {
 		return errors.New("config: empty path")
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	data, err := marshalConfig(c)
 	if err != nil {
-		return fmt.Errorf("config: marshal: %w", err)
+		return err
 	}
 	data = append(data, '\n')
 	if err := fileutil.WriteAtomic(path, data); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	return nil
+}
+
+// marshalConfig renders c as the bytes Save writes, folding in any top-level
+// keys Load captured that this binary does not model.
+//
+// Without such keys it marshals the struct directly, which keeps the field
+// order stable (proxy, backup, render, update). The merged path has to go
+// through a map, and Go sorts map keys, so a config carrying unmodelled keys
+// comes back alphabetised — cosmetic, and the same caveat claudesettings
+// documents. The struct's own keys win over the captured set, so an edit to a
+// modelled field is never shadowed by the value it was loaded with.
+func marshalConfig(c Config) ([]byte, error) {
+	if len(c.unknown) == 0 {
+		data, err := json.MarshalIndent(c, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("config: marshal: %w", err)
+		}
+		return data, nil
+	}
+	known, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("config: marshal: %w", err)
+	}
+	merged := make(map[string]json.RawMessage, len(c.unknown)+len(modelledKeys()))
+	if err := json.Unmarshal(known, &merged); err != nil {
+		return nil, fmt.Errorf("config: marshal: %w", err)
+	}
+	for k, v := range c.unknown {
+		if _, taken := merged[k]; !taken {
+			merged[k] = v
+		}
+	}
+	data, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("config: marshal: %w", err)
+	}
+	return data, nil
 }

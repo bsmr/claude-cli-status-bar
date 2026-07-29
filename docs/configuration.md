@@ -34,6 +34,18 @@ every field).
 All four keys are optional. With every key omitted, ccsb runs the native
 renderer with the default layout.
 
+Any top-level key ccsb does not recognise is left alone. Since `0.4.21` it
+survives every rewrite — `install`, `mode`, `doctor` and `update` all persist
+the config as a side effect, and before that each of them silently dropped
+what it could not model. The realistic case is version skew rather than
+hand-editing: an older ccsb still on the system running `ccsb mode native`
+over a config a newer one wrote used to delete the newer block outright.
+One visible cost: a config carrying such a key comes back with its top-level
+keys in alphabetical order, because the merge goes through a map. `ccsb
+config reset` is the deliberate exception — it moves the whole file to a
+`.bak` and starts fresh, so unrecognised keys stay in the backup and do not
+come back.
+
 ## `render`
 
 ### Fields

@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.20` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.21` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -27,8 +27,9 @@ for compatibility with existing setups (see [Background](#background)).
 > `ccsb doctor` report an `update.auto` that can never fire, `0.4.18`
 > taught the `ccsb-wizard` skill not to produce that configuration, and
 > `0.4.19` stopped filesystem content from writing escape sequences into
-> the bar, and `0.4.20` fixed the capture filename, which could not be
-> written on Windows at all).
+> the bar, `0.4.20` fixed the capture filename, which could not be written
+> on Windows at all, and `0.4.21` stopped config writes from dropping
+> top-level keys the running binary does not model).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
