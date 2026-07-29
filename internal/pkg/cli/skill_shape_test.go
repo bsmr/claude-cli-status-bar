@@ -51,6 +51,7 @@ var documentedExceptions = map[string]string{
 	// must never author their contents.
 	"command":              "proxy block — managed by `ccsb mode`, not hand-edited",
 	"args":                 "proxy block — managed by `ccsb mode`, not hand-edited",
+	"timeout":              "proxy block — bounds the proxy child; a reliability knob, not a layout choice",
 	"previous_status_line": "backup block — written by `ccsb install`, restoring it is uninstall's job",
 	// Width is the escape hatch for when detection is wrong; margin is the
 	// knob users actually reach for, and that one IS documented.

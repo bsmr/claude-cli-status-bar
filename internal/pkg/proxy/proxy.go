@@ -33,6 +33,13 @@ func Run(ctx context.Context, command string, args []string, payload []byte, std
 		return errors.New("proxy: empty command")
 	}
 
+	// Captured before the run so the error can state the limit rather than the
+	// (by then zero) time remaining.
+	var limit time.Duration
+	if d, ok := ctx.Deadline(); ok {
+		limit = time.Until(d).Round(time.Millisecond)
+	}
+
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stdout = stdout
@@ -40,6 +47,13 @@ func Run(ctx context.Context, command string, args []string, payload []byte, std
 	cmd.WaitDelay = cancelGracePeriod
 
 	if err := cmd.Run(); err != nil {
+		// exec.CommandContext SIGKILLs on expiry, so cmd.Run reports only
+		// "signal: killed" — true but useless to someone whose bar went blank.
+		// Distinguish the deadline from a plain cancel (SIGINT/SIGTERM, which
+		// is not the proxy's fault) and say which limit was hit.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("proxy: %s: timed out after %s", command, limit)
+		}
 		return fmt.Errorf("proxy: %s: %w", command, err)
 	}
 	return nil

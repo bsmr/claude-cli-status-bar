@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/statusline"
@@ -688,5 +689,50 @@ func TestRun_SchemaVersionMissingDoesNotEraseState(t *testing.T) {
 	stateGot, _ := os.ReadFile(statePath)
 	if strings.TrimSpace(string(stateGot)) != "1.0" {
 		t.Errorf("state should remain at 1.0 when payload omits schema_version, got %q", stateGot)
+	}
+}
+
+// The proxy child had no deadline at all: the only context on the path is
+// main's signal.NotifyContext, which never expires. A hanging proxy — npx
+// stalling on a dead network is the realistic case — therefore hung ccsb on
+// every status update, indefinitely. Reproduced before this change with
+// `sh -c 'sleep 30'`, which blocked until an external timeout killed it.
+func TestRun_HangingProxyIsBoundedByProxyTimeout(t *testing.T) {
+	var out, errOut bytes.Buffer
+	start := time.Now()
+
+	err := statusline.Run(context.Background(), statusline.Options{
+		ProxyCommand: "sh",
+		ProxyArgs:    []string{"-c", "sleep 30"},
+		ProxyTimeout: 150 * time.Millisecond,
+	}, strings.NewReader(`{"session_id":"hang"}`), &out, &errOut)
+
+	if err == nil {
+		t.Fatal("a proxy that never exits must produce an error, not a hang")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error should identify the timeout, got: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("Run did not return promptly: %v", elapsed)
+	}
+}
+
+// Zero means "no limit" — the pre-0.4.15 behaviour, kept as a deliberate
+// escape hatch for a proxy known to be slow. It must not be silently
+// converted into an instantly-expiring deadline.
+func TestRun_ZeroProxyTimeoutImposesNoDeadline(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := statusline.Run(context.Background(), statusline.Options{
+		ProxyCommand: "sh",
+		ProxyArgs:    []string{"-c", "sleep 0.2; printf done"},
+		ProxyTimeout: 0,
+	}, strings.NewReader(`{"session_id":"slow"}`), &out, &errOut)
+
+	if err != nil {
+		t.Fatalf("zero timeout must not bound the child: %v", err)
+	}
+	if out.String() != "done" {
+		t.Errorf("proxy output: got %q, want %q", out.String(), "done")
 	}
 }

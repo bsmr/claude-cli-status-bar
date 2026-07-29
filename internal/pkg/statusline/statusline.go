@@ -30,6 +30,10 @@ type Options struct {
 	// stdout. When empty, Run renders a minimal built-in fallback line.
 	ProxyCommand string
 	ProxyArgs    []string
+	// ProxyTimeout bounds how long the proxy child may run. Zero means no
+	// limit, which is the pre-0.4.15 behaviour and a deliberate escape hatch
+	// for a proxy known to be slow.
+	ProxyTimeout time.Duration
 	// CaptureDir, when non-empty, receives a copy of the raw stdin payload
 	// (.json) plus the rendered statusLine bytes (.out) and any stderr
 	// (.err). All three files share a basename so they can be paired.
@@ -144,7 +148,17 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 
 	var runErr error
 	if opts.ProxyCommand != "" {
-		runErr = proxy.Run(ctx, opts.ProxyCommand, opts.ProxyArgs, raw, outW, errW)
+		// Bound the child. The only context reaching here otherwise is main's
+		// signal.NotifyContext, which never expires, so a proxy that hangs
+		// hangs ccsb with it — on every status update, indefinitely. Zero
+		// keeps the old unbounded behaviour for a proxy known to be slow.
+		pctx := ctx
+		if opts.ProxyTimeout > 0 {
+			var cancel context.CancelFunc
+			pctx, cancel = context.WithTimeout(ctx, opts.ProxyTimeout)
+			defer cancel()
+		}
+		runErr = proxy.Run(pctx, opts.ProxyCommand, opts.ProxyArgs, raw, outW, errW)
 	} else {
 		cwd := p.Workspace.CurrentDir
 		if cwd == "" {
