@@ -91,7 +91,8 @@ claude-cli-status-bar/
 │       ├── fileutil/               # WriteAtomic — the temp+rename writer every persistent
 │       │                             write in the project goes through (0o700 dir / 0o600 file)
 │       ├── config/                 # JSON config at $XDG_CONFIG_HOME/ccsb/config.json
-│       │                             (proxy command/args + render config + statusLine backup)
+│       │                             (proxy command/args + render config + statusLine backup);
+│       │                             unmodelled top-level keys are preserved across writes
 │       └── claudesettings/         # ~/.claude/settings.json read/write preserving unknown keys
 │                                     via map[string]json.RawMessage
 ├── bin/                            # build output (gitignored)
