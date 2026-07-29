@@ -288,3 +288,113 @@ func TestProxyTimeoutRoundTrips(t *testing.T) {
 		t.Errorf("resolved: got %v, want 45s", got.Proxy.ProxyTimeout())
 	}
 }
+
+// config.json is the user's file, not ccsb's. Until 0.4.21 Save was a plain
+// MarshalIndent of the struct, so every top-level key the running binary did
+// not model was dropped the next time anything wrote the file — and `install`,
+// `mode` and `doctor` all write it. The realistic loss is not an exotic
+// hand-added key but a version skew: an OLDER ccsb (say one still on the
+// system from a package manager) runs `ccsb mode native` over a config a
+// NEWER one wrote, and silently deletes the block it never learnt about.
+// claudesettings has preserved unknown keys for exactly this reason since the
+// beginning; this brings config in line.
+func TestSaveLoadRoundtrip_PreservesUnknownTopLevelKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := `{
+  "proxy": {"command": "npx", "args": ["-y", "ccstatusline@latest"]},
+  "future_block": {"nested": {"deep": [1, 2, 3]}, "flag": true},
+  "scalar_from_the_future": 42
+}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Proxy.Command != "npx" {
+		t.Fatalf("modelled key did not survive Load: %+v", cfg.Proxy)
+	}
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	var got map[string]json.RawMessage
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("rewritten config does not parse: %v\n%s", err, raw)
+	}
+	for _, key := range []string{"future_block", "scalar_from_the_future"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("Save dropped the unmodelled key %q:\n%s", key, raw)
+		}
+	}
+	// Values, not just presence — a preserved key that lost its contents
+	// would be no better.
+	var block struct {
+		Nested struct{ Deep []int } `json:"nested"`
+		Flag   bool                 `json:"flag"`
+	}
+	if err := json.Unmarshal(got["future_block"], &block); err != nil {
+		t.Fatalf("future_block no longer decodes: %v", err)
+	}
+	if !reflect.DeepEqual(block.Nested.Deep, []int{1, 2, 3}) || !block.Flag {
+		t.Errorf("future_block lost content: %+v", block)
+	}
+	if string(got["scalar_from_the_future"]) != "42" {
+		t.Errorf("scalar key: got %s, want 42", got["scalar_from_the_future"])
+	}
+}
+
+// The modelled keys must not also end up in the carried-over set, or a stale
+// copy of one would outlive an edit to it.
+func TestSaveLoadRoundtrip_ModelledKeyEditsWinOverTheLoadedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"proxy":{"command":"old"},"mystery":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Proxy.Command = "new"
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Proxy.Command != "new" {
+		t.Errorf("proxy.command: got %q, want new", reloaded.Proxy.Command)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), "mystery") {
+		t.Errorf("the unmodelled key was dropped:\n%s", raw)
+	}
+}
+
+// `ccsb config reset` deliberately builds a fresh Config carrying only the
+// uninstall backup, and must NOT resurrect anything: the whole point is that
+// the previous file moved aside to .bak. This is why the carried-over keys
+// live on the loaded value rather than being re-read from disk inside Save.
+func TestSave_FreshConfigCarriesNothingOver(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"mystery":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(path, config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "mystery") {
+		t.Errorf("Save resurrected a key from the file it overwrote:\n%s", raw)
+	}
+}
