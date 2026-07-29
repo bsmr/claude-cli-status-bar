@@ -349,8 +349,12 @@ go test -race -cover ./...   # all tests
 go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...   # version pinned, same as CI
 gofmt -l .                   # must be empty
+go mod tidy -diff            # must be clean; the release build gates on it too
 go build -o bin/ccsb ./cmd/ccsb
 ```
+
+CI runs the same set on every push to `main`, `development-*`, `fix-*`,
+`hotfix-*` and `feature-*`, plus a windows/darwin cross-compile matrix.
 
 See [`CLAUDE.md`](CLAUDE.md) for the package layout, data flow, and
 contributor conventions.

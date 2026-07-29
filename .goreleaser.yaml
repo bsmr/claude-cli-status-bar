@@ -16,7 +16,14 @@ version: 2
 
 before:
   hooks:
-    - go mod tidy
+    # `-diff` reports and fails; the bare `go mod tidy` this replaces would
+    # REWRITE go.mod/go.sum in the release checkout, so a release could be
+    # built from a different dependency set than the one CI tested — and
+    # silently, since a tidy that changes something says nothing. It is also
+    # the suspected cause of v0.4.7 shipping as `+dirty`. ci.yml runs the
+    # same check on every push, so an untidy tree is caught long before a
+    # tag makes this hook the messenger.
+    - go mod tidy -diff
 
 builds:
   - id: ccsb

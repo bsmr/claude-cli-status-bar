@@ -41,6 +41,7 @@ go test -race -cover ./...              # with race detector and coverage
 go vet ./...                            # static checks
 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...  # staticcheck (version pinned, same as CI)
 gofmt -l .                              # list mis-formatted files (must be empty)
+go mod tidy -diff                       # module tidiness; gated by CI and by GoReleaser's before hook
 ```
 
 Smoke test against a Claude-Code-style payload (fallback render — no proxy configured):

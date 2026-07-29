@@ -1,15 +1,28 @@
 name: ci
 
-# Runs on every push to main/development-* and on every PR targeting
-# main. Gates: gofmt cleanliness, go vet, staticcheck, the test suite
-# with race + cover, and a cross-compile matrix so the windows/darwin
+# Runs on every push to a working branch and on every PR targeting main.
+# Gates: gofmt cleanliness, go vet, staticcheck, module tidiness, the test
+# suite with race + cover, and a cross-compile matrix so the windows/darwin
 # build tags are exercised before goreleaser hits them at tag time.
 # Matches the local "Develop" block in the README.
+#
+# The branch list mirrors the project's branch model, not just its release
+# branches. Work lands from `fix-*`, `hotfix-*` and `feature-*` as well as
+# `development-*`, and it lands by CLI merge rather than by pull request —
+# so the `pull_request` trigger below never fires for it. Until 0.4.20 those
+# three prefixes were missing here, and their commits first met CI *after*
+# they were already on main.
+#
+# `production-*` is deliberately absent: it is created from main after the
+# merge, so its content has already been through this workflow.
 on:
   push:
     branches:
       - main
       - 'development-**'
+      - 'fix-**'
+      - 'hotfix-**'
+      - 'feature-**'
   pull_request:
     branches:
       - main
@@ -38,6 +51,14 @@ jobs:
 
       - name: go vet
         run: go vet ./...
+
+      # Tidiness is gated HERE so it cannot surface at tag time. The release
+      # job runs the same check as a goreleaser `before` hook, and a hook
+      # failure aborts a release whose tag is already public — the one moment
+      # it is most expensive to learn. `-diff` reports without writing, so
+      # this step can never leave the tree modified.
+      - name: go mod tidy
+        run: go mod tidy -diff
 
       # Run from the module cache without adding a tool dependency to
       # go.mod: `go run pkg@version` is module-aware but leaves the
