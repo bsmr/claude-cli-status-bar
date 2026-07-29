@@ -193,3 +193,52 @@ func TestWizardAsset_CanonicalExamplePinsTheRiskyShapes(t *testing.T) {
 			"three top-level keys, so a rewrite following it deleted the user's auto-update setting")
 	}
 }
+
+// The wizard writes `rows`, and any config with `rows` loses the default
+// layout's `check_update: true` — which is the only thing that ever consults
+// `update.auto`. So a wizard rewrite can silently switch off a user's
+// auto-updating without touching the `update` block it was told to preserve.
+// v0.4.17 made `ccsb doctor` report the resulting configuration; these two
+// tests keep the wizard from producing it in the first place.
+//
+// Structural, not prose: an example that carries `update.auto` must also carry
+// a version segment that enables the check, because an AI copying the example
+// copies its shape, whatever the surrounding text says.
+func TestWizardAsset_ExamplesWithAutoUpdateAlsoEnableTheCheck(t *testing.T) {
+	for _, b := range fencedJSONBlocks(string(cli.WizardSkillContent())) {
+		var c config.Config
+		if err := json.Unmarshal([]byte(b), &c); err != nil {
+			continue // TestWizardAsset_EveryJSONExampleParsesAsConfig owns this
+		}
+		if c.Update.Auto == "" || len(c.Render.Rows) == 0 {
+			continue
+		}
+		checks := false
+		for _, row := range c.Render.Rows {
+			for _, s := range row.Segments {
+				if s.Type == "version" && s.CheckUpdate {
+					checks = true
+				}
+			}
+		}
+		if !checks {
+			t.Errorf(`an example sets "update.auto": %q alongside its own "rows", but no version `+
+				`segment in it sets "check_update": true — copying that layout turns the user's `+
+				"auto-updating off while leaving it configured", c.Update.Auto)
+		}
+	}
+}
+
+// And the asset must say why, not merely demonstrate it: an AI editing a
+// user's existing rows has no example to copy from. The test asks only that
+// some paragraph names both sides of the dependency, so it pins the fact and
+// not the wording.
+func TestWizardAsset_ExplainsTheAutoUpdateDependency(t *testing.T) {
+	for _, para := range strings.Split(string(cli.WizardSkillContent()), "\n\n") {
+		if strings.Contains(para, "check_update") && strings.Contains(para, "update.auto") {
+			return
+		}
+	}
+	t.Error(`no paragraph of the wizard asset mentions "check_update" and "update.auto" together; ` +
+		"nothing tells the model that writing rows without the former disables the latter")
+}
