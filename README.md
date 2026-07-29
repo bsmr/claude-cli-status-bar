@@ -320,18 +320,44 @@ truncated.
 - **0.3.x** — the `ccsb-wizard` Claude Code skill: an opt-in, AI-guided
   configuration dialogue installed with `ccsb install-skill` and started
   with `/ccsb-wizard` inside Claude Code.
-- **0.4.x** — render options contributed from real-world use: configurable
-  bar glyphs (`bar_glyphs` / `bar_style`), independent colour for a bar and
-  its label (`bar_fg` / `label_fg` with their own thresholds), placement of
-  the token fraction (`token_position`), an opt-in `git_dirty` segment
-  that keeps the render path free of blocking git calls by refreshing a
-  cached count out of band, and a version segment that flags available
-  GitHub releases with escalating color. `0.4.3` acted on a full-codebase
-  review — dead
-  code removed, an install-backup bug fixed, the background `git status`
-  hardened, and CI extended with a pinned `staticcheck` plus a
-  windows/darwin cross-compile matrix. `0.4.4` added `ccsb captures clean`
-  so the capture directory no longer grows without bound.
+- **0.4.x** — four threads, in rough order of appearance.
+
+  *Render options from real-world use*, contributed as pull requests:
+  configurable bar glyphs (`bar_glyphs` / `bar_style`), independent colour
+  for a bar and its label (`bar_fg` / `label_fg` with their own
+  thresholds), placement of the token fraction (`token_position`), and an
+  opt-in `git_dirty` segment that keeps the render path free of blocking
+  git calls by refreshing a cached count out of band.
+
+  *Keeping itself current*: the `version` segment flags available GitHub
+  releases with escalating colour, `ccsb update` installs them (verifying
+  the download against the release checksums, and refusing on Windows, on
+  local builds, and where the target directory is not writable), and the
+  opt-in `update.auto` config block lets the renderer do it unattended
+  within a version-jump ceiling you set. Because that chain has a
+  non-obvious dependency — it only fires from a layout that renders a
+  `version` segment with `check_update: true` — `ccsb doctor` reports an
+  `update.auto` that can never fire, and the `ccsb-wizard` skill knows not
+  to generate one.
+
+  *Not losing your data*: `ccsb install` no longer risks the `statusLine`
+  entry it promised to restore, `ccsb doctor` no longer deletes a proxy
+  command it merely failed to resolve through `PATH`, config writes no
+  longer drop top-level keys the running binary does not model, and
+  capture filenames are now writable on Windows and bounded in length.
+  Text taken from the filesystem — a branch name, a directory name — is
+  stripped of control characters before it reaches your terminal.
+
+  *Behaving under real conditions*: the proxy child is bounded by
+  `proxy.timeout` (default 10s) so a stalled proxy cannot hang the bar; a
+  bare `ccsb` typed at a terminal prints its usage instead of appearing to
+  hang while it waits for a payload; and terminal-size detection reads the
+  `COLUMNS`/`LINES` variables Claude Code exports, which also gives Windows
+  real detection for the first time. `ccsb captures clean` keeps the
+  capture directory from growing without bound.
+
+  Two full audits fed this series — a codebase review at `0.4.3` and a
+  docs-vs-code audit that ran across `0.4.11`–`0.4.21`. Both are closed.
 
 ## Background
 
