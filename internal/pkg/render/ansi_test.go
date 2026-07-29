@@ -59,3 +59,42 @@ func TestStyle_WrapsWhenAnySingleAttributeIsSet(t *testing.T) {
 		t.Errorf("bold only: got %q", got)
 	}
 }
+
+// A branch name and a directory name are filesystem content, not ccsb's own
+// text, and both reach stdout. A crafted `.git/HEAD` was live-reproduced
+// emitting a raw OSC-8 hyperlink plus a newline that added a whole row to the
+// bar; a directory whose name carries a BEL does the same through `cwd`.
+func TestSanitizePrintable(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"ordinary text is untouched", "feature-x", "feature-x"},
+		{"printable unicode survives", "läuft-ünicode—✓ 🙂", "läuft-ünicode—✓ 🙂"},
+		{"newline goes, or it adds a row to the bar", "a\nb", "ab"},
+		{"carriage return goes, or it overwrites the row", "a\rb", "ab"},
+		{"tab goes", "a\tb", "ab"},
+		{"NUL goes", "a\x00b", "ab"},
+		{"DEL goes", "a\x7fb", "ab"},
+		{"an OSC-8 hyperlink is defanged", "ma\x1b]8;;http://evil\x07in", "ma]8;;http://evilin"},
+		{"an SGR colour escape cannot be smuggled in", "x\x1b[31mred", "x[31mred"},
+		{"the space we do want is kept", "on main", "on main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sanitizePrintable(tt.in); got != tt.want {
+				t.Errorf("sanitizePrintable(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// Invalid UTF-8 must not be dropped silently: it becomes the replacement
+// character, which is printable and shows the user something was there.
+func TestSanitizePrintable_InvalidUTF8BecomesVisible(t *testing.T) {
+	got := sanitizePrintable("a\xffb")
+	if got != "a�b" {
+		t.Errorf("sanitizePrintable(%q) = %q, want %q", "a\xffb", got, "a�b")
+	}
+}

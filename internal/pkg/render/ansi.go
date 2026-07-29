@@ -2,7 +2,10 @@
 // render.go.
 package render
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 const reset = "\x1b[0m"
 
@@ -82,4 +85,31 @@ func validColor(n string) bool {
 		v = v*10 + int(r-'0')
 	}
 	return v <= 255
+}
+
+// sanitizePrintable drops every non-printable rune from s, leaving text that
+// cannot drive the terminal.
+//
+// It is the inbound counterpart to fg256's strict validation: that one keeps a
+// malicious *config* from smuggling escapes into ccsb's own output, this one
+// keeps content ccsb *reads* from doing the same. Two such sources reach the
+// bar — the branch name in `.git/HEAD` and the working directory's name — and
+// both are filesystem content, which arrives with a repository rather than
+// being chosen by the user. Live-reproduced before this existed: a HEAD
+// carrying an OSC-8 hyperlink printed a working link, and its embedded newline
+// added an entire row to the status bar.
+//
+// Dropping rather than escaping is deliberate: the remaining text is what the
+// attacker wrote minus its control characters, so `\x1b]8;;url\x07` shows up as
+// the visible nonsense `]8;;url` instead of quietly vanishing. Invalid UTF-8
+// decodes to U+FFFD, which is printable and therefore kept, for the same
+// reason. Only ASCII space survives among the whitespace — a tab or newline in
+// a branch name has no legitimate use here, and both damage the layout.
+func sanitizePrintable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return -1
+	}, s)
 }
