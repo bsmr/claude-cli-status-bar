@@ -55,7 +55,7 @@ come back.
 | `rows`      | array of arrays | default rows  | Each inner array is one output line. Segments in a row are joined with `separator`. |
 | `separator` | string          | `" \| "`      | Joiner between segments in the same row.                    |
 | `powerline` | bool            | `false`       | When true, each row gets a coloured background fill (from `bg`, `palette`, or the built-in default palette) and segments are joined with a Powerline chevron. The glyph is selectable via `powerline_style`. See [Powerline](#powerline). |
-| `width`     | int             | `0`           | Explicit terminal-cols override. When `> 0`, ccsb skips terminal-size detection and uses this value. Default `0` runs the detection chain (`/dev/tty` ioctl, then `/proc` parent-process walk). |
+| `width`     | int             | `0`           | Explicit terminal-cols override. When `> 0`, ccsb skips terminal-size detection and uses this value. Default `0` runs the detection chain (`/dev/tty` ioctl, then `COLUMNS`/`LINES`, then a `/proc` parent-process walk). |
 | `margin`    | int             | `2`           | Plain (no-bg) leading spaces per row; usable bg-fill width is shrunk by `2*margin`. Leaves room for Claude Code's built-in statusLine chrome on each side. Set to `0` to disable. Defaults to `2` when omitted; negative values clamp to `0`. |
 | `powerline_style` | string    | `"thin"`      | Chevron glyph in Powerline mode. `"thin"` (default) renders U+E0B1; `"solid"` renders U+E0B0 as a filled wedge. Unknown values silently fall back to `"thin"`. |
 | `cap_style` | string | `"round"` | End-cap glyph style applied when a row's `caps` is true. `"round"` (default) renders U+E0B6 / U+E0B4 half-circles; `"square"` extends the bg with a 1-col plain space on each side; `"slant"` renders U+E0BC / U+E0BA filled triangles. Unknown values fall back to `"round"`. |
@@ -152,9 +152,9 @@ row layout:
 - Each `Row.Bg` is opened at the start of the row and fills the
   line all the way to the terminal's right edge. The width is taken
   from `width` if set, otherwise from `/dev/tty + ioctl(TIOCGWINSZ)`,
-  otherwise from a `/proc` parent-process walk. When every source
-  fails, the row falls back to natural width and the bg ends after
-  the last segment.
+  otherwise from the `COLUMNS` environment variable, otherwise from a
+  `/proc` parent-process walk. When every source fails, the row falls
+  back to natural width and the bg ends after the last segment.
 - Segments are joined with a Powerline chevron whose colours depend
   on the glyph style. `"solid"` (U+E0B0, filled wedge) renders with
   fg = previous segment's bg and bg = next segment's bg, so the
@@ -367,7 +367,7 @@ segment functions, so they apply to every type:
 | `align` | string  | `"right"` anchors this segment (and every later segment in the same row) to the right edge of the usable width. The slack between the preceding left group and the first right-aligned segment becomes padding; in Powerline mode that padding inherits the bg of the last left-aligned visible segment so the streak stays continuous. Degrades to inline (no padding) when terminal width is unknown or the row already overflows. Unknown values are treated as left (the default). Distinct from `Row.align="right"`, which forces the whole row right and bypasses Powerline. |
 | `wrap`  | bool    | When true, marks the segment as eligible for row-overflow reflow. If the containing row's visible content exceeds the usable width (`ttyCols - 2*margin` minus cap columns when active), every `wrap: true` segment is pulled out and joined into a new row inserted directly after the original. The new row inherits the parent row's `bg` / `palette` / `caps` / Powerline mode; palette rotation restarts at index 0. Reflow degrades to a no-op (segments stay inline) when `ttyCols` is unknown or the row already fits. In the default layout `limit_5h` and `limit_7d` carry this flag so a narrow terminal automatically lifts them onto their own line. |
 | `max_width` | int | When positive, caps the visible column width of the segment's rendered body. Longer bodies are shortened to `max_width − 1` columns and suffixed with `…` (U+2026); shorter bodies pass through unchanged. Zero (the default) disables truncation. Truncation runs on the segment's **plain** body before the style wrap, so it is safe for text-only segments (`text`, `cwd`, `git_branch`, `model`, …). Segments that self-embed ANSI escapes for sub-styling (`context`, `limit_5h`, `limit_7d` when `threshold_target: "pct"`, or when any of `bar_fg` / `bar_thresholds` / `label_fg` / `label_thresholds` is set) should leave `max_width` at 0 — truncating across an embedded escape can leave the terminal in an unintended SGR state. |
-| `min_cols` | int | When positive, suppresses the segment when the detected terminal width is strictly narrower than `min_cols`. The hidden segment behaves like an empty render: no body, no chevron, no palette slot. The gate runs before the segment function fires, so hidden segments cost nothing. When the terminal width is unknown (`ttyCols == 0`, e.g. no `/dev/tty`, no `/proc` walk hit, no `Config.Width` override) the gate is bypassed — "no info to gate on" defaults to "keep the segment". Zero (the default) disables the gate. Pairs naturally with `max_width` and `wrap` (both above) to build layouts that gracefully shed segments as the terminal narrows. |
+| `min_cols` | int | When positive, suppresses the segment when the detected terminal width is strictly narrower than `min_cols`. The hidden segment behaves like an empty render: no body, no chevron, no palette slot. The gate runs before the segment function fires, so hidden segments cost nothing. When the terminal width is unknown (`ttyCols == 0`, e.g. no `/dev/tty`, no `COLUMNS`, no `/proc` walk hit, no `Config.Width` override) the gate is bypassed — "no info to gate on" defaults to "keep the segment". Zero (the default) disables the gate. Pairs naturally with `max_width` and `wrap` (both above) to build layouts that gracefully shed segments as the terminal narrows. |
 | `shrink` | bool | When true, marks the segment as the one that yields display width when its row would overflow. After reflow, a pre-pass measures the row; if the visible content exceeds the usable width (`ttyCols - 2*margin` minus cap columns when active), every `shrink: true` segment has its effective `max_width` lowered — in row order, each yielding down to a 1-column floor (the `…` glyph) — until the overflow is absorbed. The cut reuses the `max_width` path, so `shrink` is the **dynamic** counterpart to that **static** cap and is safe on the same text-only segments (`text`, `cwd`, `git_branch`, `model`, …). A user-set `max_width` is only ever lowered further, never raised. A no-op when `ttyCols` is unknown or the row already fits. In the default layout `cwd` carries this flag so the right-aligned `version` stamp stays intact on narrow terminals. |
 
 Per-segment additional fields are documented under each type below.
@@ -741,14 +741,20 @@ chevron is dropped naturally. With a non-empty `label`, the output is
 prefixed `"<label>: "`.
 
 Detection chain (first non-zero `cols` wins): the `width` config
-field > `/dev/tty` ioctl > `/proc` parent-process walk. When ccsb
-is invoked by Claude Code, `/dev/tty` is unreachable and the `/proc`
-walk supplies the size. When ccsb is invoked directly from a shell,
+field > `/dev/tty` ioctl > the `COLUMNS`/`LINES` environment
+variables > `/proc` parent-process walk. When ccsb is invoked by
+Claude Code, `/dev/tty` is unreachable and `COLUMNS`/`LINES` supply
+the size — Claude Code exports both and keeps them current for every
+invocation. The `/proc` walk remains the fallback for hosts that
+export neither. When ccsb is invoked directly from a shell,
 `/dev/tty` satisfies the chain on the first try.
 
+On Windows the chain is `width` > `COLUMNS`/`LINES` > unknown; there
+is no `/dev/tty` and no `/proc`.
+
 When the `width` config field is set, only `cols` is overridden —
-`rows` stays `0` until `/dev/tty` or the `/proc` walk supplies a
-row count. A custom format using `{rows}` therefore renders as
+`rows` stays `0` until `/dev/tty`, `LINES`, or the `/proc` walk
+supplies a row count. A custom format using `{rows}` therefore renders as
 `"…×0"` while `width` is the active source.
 
 ```json
