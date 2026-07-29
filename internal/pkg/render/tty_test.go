@@ -404,6 +404,55 @@ func TestDiscoverTermSize_DevTTYWinsOverEnv(t *testing.T) {
 	}
 }
 
+func TestDiscoverTermSize_DevTTYZeroColsFallsThrough(t *testing.T) {
+	// A pty allocated without a size — what script(1) and any
+	// forkpty caller that never sets TIOCSWINSZ produce — answers
+	// TIOCGWINSZ successfully with Col == 0. That is not a size, so
+	// the chain must carry on to the environment rather than return
+	// the ioctl's (0, 0).
+	prevDev, prevEnv := devTTYWinsizeReader, envWinsizeReader
+	defer func() {
+		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
+	}()
+	devTTYWinsizeReader = func() (int, int, bool) { return 0, 0, true }
+	envWinsizeReader = func() (int, int, bool) { return 100, 40, true }
+	cols, rows := discoverTermSize(Config{})
+	if cols != 100 || rows != 40 {
+		t.Errorf("got (%d, %d), want (100, 40)", cols, rows)
+	}
+}
+
+func TestWalkProcForTTY_ZeroColsContinuesWalk(t *testing.T) {
+	// Same defect one stage down: an ancestor whose fd 0 is a size-less
+	// pty answers TIOCGWINSZ with err == nil and Col == 0. Accepting it
+	// ends the walk and hides an ancestor that does have a real size.
+	stat := func(pid int) ([]byte, error) {
+		switch pid {
+		case 100:
+			return procStatStub("sizeless", 200, 42), nil
+		case 200:
+			return procStatStub("sized", 300, 42), nil
+		}
+		t.Fatalf("unexpected pid: %d", pid)
+		return nil, nil
+	}
+	size := func(path string) (int, int, error) {
+		switch path {
+		case "/proc/100/fd/0":
+			return 0, 0, nil
+		case "/proc/200/fd/0":
+			return 128, 37, nil
+		}
+		t.Fatalf("unexpected path: %s", path)
+		return 0, 0, nil
+	}
+	cols, rows := walkProcForTTY(100, 16, stat, size)
+	if cols != 128 || rows != 37 {
+		t.Errorf("got (%d, %d), want (128, 37)", cols, rows)
+	}
+}
+
 func TestDevTTYWinsizeReader_DefaultDoesNotPanic(t *testing.T) {
 	// The production default opens /dev/tty. Under `go test` the
 	// controlling tty may or may not be reachable. Assert only that

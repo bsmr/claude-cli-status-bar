@@ -749,6 +749,13 @@ invocation. The `/proc` walk remains the fallback for hosts that
 export neither. When ccsb is invoked directly from a shell,
 `/dev/tty` satisfies the chain on the first try.
 
+"First non-zero `cols`" is meant literally, and since `0.4.24` the code
+matches it: a pty allocated without a size — `script(1)`, and any
+`forkpty` caller that never issues `TIOCSWINSZ` — answers the ioctl
+successfully with `0` columns. That is not a size, so the chain carries
+on to `COLUMNS`/`LINES` and then to the `/proc` walk instead of
+reporting "unknown".
+
 On Windows the chain is `width` > `COLUMNS`/`LINES` > unknown; there
 is no `/dev/tty` and no `/proc`.
 
