@@ -165,6 +165,15 @@ The `version` segment additionally accepts:
   where "the default" depends on which config you mean: ccsb's own shipped
   default layout sets it `true`, but any config the wizard writes or a user
   hand-edits starts with it off unless this key is present.
+
+  **This key also gates `update.auto`.** The self-update trigger lives inside
+  this segment's check, so a config whose `rows` contain no `version` segment
+  with `check_update: true` never updates itself, no matter what `update.auto`
+  says. Writing `rows` for a user who has `update.auto` set and omitting this
+  key therefore switches their auto-updating off while leaving it configured —
+  the setting survives, the behaviour does not. `ccsb doctor` reports exactly
+  this case, which is how it usually gets noticed. So: if the config carries
+  `update.auto`, give the layout a `version` segment with `check_update: true`.
 - `update_check_interval`: a Go duration string (e.g. `"6h"`) bounding how
   often the check re-runs; defaults to `"24h"` when empty or unparsable
 - `update_minor_fg` / `update_major_fg` / `update_big_fg`: escalating
@@ -210,7 +219,11 @@ which belong to ccsb:
   original statusLine from — lose it and their original bar is gone for good.
 - `proxy` is managed by `ccsb mode`.
 - `update.auto` (`"patch"`, `"minor"` or `"major"`) is the user's opt-in
-  auto-update setting. Dropping it silently switches the feature off.
+  auto-update setting. Dropping it silently switches the feature off — and so
+  does writing `rows` without a `version` segment that sets
+  `check_update: true`, because that segment's check is what consults
+  `update.auto` at all. Preserving the block is not enough; check the layout
+  too.
 
 So edit the file rather than replacing it. Read it first (Step 1), then use
 the Edit tool to change only the `render` block, or rebuild the whole document
