@@ -1,6 +1,6 @@
 # claude-cli-status-bar
 
-![ccsb rendering a multi-row Powerline statusline with model, context bar, 5h and 7d rate-limit bars, git branch, lines diff, cwd, and version](docs/img/screenshot.png)
+![ccsb rendering its default two-row Powerline statusline with round end caps: row one carries the model name, a mode glyph, a context bar at 18 percent, and 5h and 7d rate-limit bars with their percentages and reset times; row two carries the git branch, a lines-changed diff, the working directory, and a right-aligned version stamp](docs/img/screenshot.png)
 
 A native [statusLine](https://docs.claude.com/en/docs/claude-code/statusline)
 renderer for Claude Code, written in Go. ccsb reads the JSON payload Claude
