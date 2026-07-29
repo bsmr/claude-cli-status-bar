@@ -51,3 +51,7 @@ docs/superpowers/
 # drops ~30 MB of archives here on every local validation run.
 /dist/
 
+# Scratch space for files on their way into (or out of) the repo — e.g. a
+# screenshot dropped here before it replaces docs/img/screenshot.png.
+/.tmp/
+
