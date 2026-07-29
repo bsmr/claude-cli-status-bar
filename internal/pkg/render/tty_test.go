@@ -423,6 +423,73 @@ func TestDiscoverTermSize_DevTTYZeroColsFallsThrough(t *testing.T) {
 	}
 }
 
+func TestDiscoverTermSize_DevTTYZeroColsReachesProcWalkWithoutEnv(t *testing.T) {
+	// The other half of the same promise: a size-less /dev/tty on a host
+	// that exports no COLUMNS must fall through BOTH remaining stages and
+	// land on the /proc walk. Pinning only the environment stage leaves a
+	// refactor free to end the chain once /dev/tty has answered, which is
+	// the pre-0.4.24 bug for exactly the hosts that need the walk.
+	prevDev, prevEnv, prevStat, prevFD := devTTYWinsizeReader, envWinsizeReader, procStatReader, procFDWinsizeReader
+	defer func() {
+		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
+		procStatReader = prevStat
+		procFDWinsizeReader = prevFD
+	}()
+	devTTYWinsizeReader = func() (int, int, bool) { return 0, 0, true }
+	envWinsizeReader = func() (int, int, bool) { return 0, 0, false }
+	procStatReader = func(pid int) ([]byte, error) { return procStatStub("parent", 1, 42), nil }
+	procFDWinsizeReader = func(path string) (int, int, error) { return 128, 37, nil }
+	cols, rows := discoverTermSize(Config{})
+	if cols != 128 || rows != 37 {
+		t.Errorf("got (%d, %d), want (128, 37)", cols, rows)
+	}
+}
+
+func TestDiscoverTermSize_DevTTYOneColumnZeroRowsIsAccepted(t *testing.T) {
+	// Pins what the guard keys on. Every other fixture in this file has
+	// cols and rows either both set or both zero, so nothing stops the
+	// clause becoming "r > 0" or "c > 0 && r > 0" — either of which
+	// contradicts discoverTermSize's own contract that rows may be 0
+	// while cols is not. cols == 1 also pins the threshold itself:
+	// the clause is "> 0", not "> 1".
+	prevDev, prevEnv := devTTYWinsizeReader, envWinsizeReader
+	defer func() {
+		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
+	}()
+	devTTYWinsizeReader = func() (int, int, bool) { return 1, 0, true }
+	envWinsizeReader = func() (int, int, bool) {
+		t.Fatal("envWinsizeReader must not be called: /dev/tty reported a usable column count")
+		return 0, 0, false
+	}
+	cols, rows := discoverTermSize(Config{})
+	if cols != 1 || rows != 0 {
+		t.Errorf("got (%d, %d), want (1, 0)", cols, rows)
+	}
+}
+
+func TestWalkProcForTTY_OneColumnZeroRowsIsAccepted(t *testing.T) {
+	// The walker's half of the same two pins: a real winsize may report
+	// rows 0, and one column is a column.
+	stat := func(pid int) ([]byte, error) {
+		if pid != 100 {
+			t.Fatalf("walk must stop at the first ancestor with a usable size, reached pid %d", pid)
+		}
+		return procStatStub("first", 200, 42), nil
+	}
+	size := func(path string) (int, int, error) {
+		if path != "/proc/100/fd/0" {
+			t.Fatalf("unexpected path: %s", path)
+		}
+		return 1, 0, nil
+	}
+	cols, rows := walkProcForTTY(100, 16, stat, size)
+	if cols != 1 || rows != 0 {
+		t.Errorf("got (%d, %d), want (1, 0)", cols, rows)
+	}
+}
+
 func TestWalkProcForTTY_ZeroColsContinuesWalk(t *testing.T) {
 	// Same defect one stage down: an ancestor whose fd 0 is a size-less
 	// pty answers TIOCGWINSZ with err == nil and Col == 0. Accepting it
