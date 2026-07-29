@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.16` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.17` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -23,7 +23,8 @@ for compatibility with existing setups (see [Background](#background)).
 > and added tests that keep it there; `0.4.14` made `ccsb doctor` report an
 > installed skill copy that no longer matches the binary; `0.4.15` bounded
 > the proxy child, which could previously hang ccsb indefinitely; `0.4.16`
-> corrected documentation that had drifted from the code).
+> corrected documentation that had drifted from the code; `0.4.17` made
+> `ccsb doctor` report an `update.auto` that can never fire).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -108,9 +109,9 @@ for compatibility with existing setups (see [Background](#background)).
   ccsb's own default layout does. A hand-written or wizard-generated `rows`
   block does **not** — `check_update` is a Go `bool` whose zero value is
   `false` — so on such a config the background check never runs and
-  `update.auto` sits inert with nothing to indicate it. If updates are not
-  happening, check that first; `ccsb doctor` reports the other causes
-  (Windows, a local build, an unwritable target).
+  `update.auto` sits inert while still reading as enabled. If updates are
+  not happening, run `ccsb doctor`: it names that case as well as the
+  others (Windows, a local build, an unwritable target).
 
 ## Install
 
@@ -188,7 +189,7 @@ ccsb captures clean               # remove captured payloads and output
 ccsb captures clean --older-than 7d  # ... keeping anything newer
 ccsb status       # print resolved paths, hook state, mode, proxy/backup
 ccsb doctor       # diagnose and auto-fix install/proxy problems, check schema drift,
-                  # report a stale ccsb-wizard skill copy
+                  # report a stale ccsb-wizard skill copy or an inert update.auto
 ccsb update       # replace this binary with the newest GitHub release
 ccsb install-skill   # install the ccsb-wizard configuration skill
 ccsb uninstall-skill # remove it again

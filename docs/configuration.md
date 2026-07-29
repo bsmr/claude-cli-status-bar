@@ -307,7 +307,18 @@ The trigger lives in the `version` segment, so it only fires from a layout
 that actually renders one with `"check_update": true` — and only when a
 state directory is resolvable. The default layout satisfies both. A custom
 `rows` block without such a segment (the kind the `ccsb-wizard` skill
-produces) silently makes `update.auto` inert; nothing warns about it.
+produces) makes `update.auto` inert while it still reads as enabled.
+Nothing in the rendered bar shows this, but `ccsb doctor` says so:
+
+```text
+ccsb: doctor: update.auto: "patch" never runs — no version segment sets
+"check_update": true, and the update check only runs from there
+```
+
+Like the wizard-skill check it reports and does not repair — the layout is
+yours — and it is not counted in doctor's `fixed N issue(s)` tally. The fix
+is to add `"check_update": true` to a `version` segment in `rows`, or to
+delete the `rows` block entirely and fall back to the default layout.
 
 When enabled, the renderer starts a detached `ccsb update` at most once per
 [`update_check_interval`](#version) (24h by default) — the same interval

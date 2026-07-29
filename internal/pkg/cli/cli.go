@@ -361,9 +361,11 @@ Subcommands:
               proxy command is circular, another ccsb binary, or cannot be
               resolved to an executable. Resolution uses PATH, so a bare
               command name like "npx" counts as found when it is installed.
-              It also reports — without changing it — an installed ccsb-wizard
-              skill that differs from this binary's copy, since updating ccsb
-              does not update a skill already written to ~/.claude/skills/.
+              It also reports — without changing them — an installed
+              ccsb-wizard skill that differs from this binary's copy, since
+              updating ccsb does not update a skill already written to
+              ~/.claude/skills/, and an update.auto that cannot fire because
+              no version segment in "rows" sets "check_update": true.
   update      Replace this binary with the newest GitHub release. Refuses
               on locally built binaries, Windows, and non-writable targets.
   install-skill   Extract the ccsb-wizard Claude Code skill to
