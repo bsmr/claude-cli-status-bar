@@ -224,6 +224,9 @@ func runDoctor(p Paths, stdout io.Writer) error {
 	if diag := autoUpdateDiagnostic(cfg.Update.Auto); diag != "" {
 		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
 	}
+	if diag := inertAutoUpdateDiagnostic(cfg); diag != "" {
+		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
+	}
 	// Reported, never repaired — see skillDiagnostic. It is also not counted in
 	// `fixed`, so "no issues found" still refers to what doctor actually acted on.
 	if diag := skillDiagnostic(p); diag != "" {
@@ -256,6 +259,35 @@ func updateDiagnostic(reason render.BlockReason) string {
 	default:
 		return fmt.Sprintf("self-update: blocked (%s)", reason)
 	}
+}
+
+// inertAutoUpdateDiagnostic reports an update.auto that can never fire, or ""
+// when it can — or when it is not asked for, or already unusable for a reason
+// autoUpdateDiagnostic prints itself.
+//
+// The auto-update trigger sits inside the version segment's background check:
+// renderVersion returns early unless that segment sets check_update, so
+// update.auto is never consulted at all. check_update is a plain Go bool whose
+// zero value is false and only defaultConfig sets it — and defaultConfig applies
+// only when the config carries no rows. Every hand-written or wizard-generated
+// layout therefore disables the whole update path while update.auto sits in the
+// config looking enabled; a real machine stayed on v0.4.10 that way.
+//
+// Reported, never repaired, and not counted in doctor's `fixed` tally: the
+// layout is the user's (same reasoning as skillDiagnostic).
+func inertAutoUpdateDiagnostic(cfg config.Config) string {
+	if cfg.Update.Auto == "" || autoUpdateDiagnostic(cfg.Update.Auto) != "" || len(cfg.Render.Rows) == 0 {
+		return ""
+	}
+	for _, row := range cfg.Render.Rows {
+		for _, seg := range row.Segments {
+			if seg.Type == "version" && seg.CheckUpdate {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("update.auto: %q never runs — no version segment sets \"check_update\": true, "+
+		"and the update check only runs from there", cfg.Update.Auto)
 }
 
 // autoUpdateDiagnostic reports an update.auto value ccsb does not
