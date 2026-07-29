@@ -131,5 +131,9 @@ func readHeadBranch(gitDir string) string {
 	if !ok {
 		return ""
 	}
-	return rest
+	// HEAD is repository content, and a repository can be handed to you as a
+	// tarball. TrimSpace above only touches the ends, so an escape sequence or
+	// a newline in the middle of the ref name would otherwise reach the
+	// terminal verbatim — see sanitizePrintable.
+	return sanitizePrintable(rest)
 }

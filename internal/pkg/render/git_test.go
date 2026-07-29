@@ -3,7 +3,9 @@ package render
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode"
 )
 
 // branch is the default-scope shorthand used by the tests below: production
@@ -200,5 +202,26 @@ func mustWriteFile(t *testing.T, p, content string) {
 	t.Helper()
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", p, err)
+	}
+}
+
+// HEAD is a file inside a repository, and a repository can arrive as a
+// tarball. Live-reproduced before this guard existed: the escape sequence
+// reached the terminal raw and the embedded newline split the status bar
+// into an extra row. TrimSpace does not help — it only trims the ends.
+func TestBranch_StripsControlCharactersFromHead(t *testing.T) {
+	dir := t.TempDir()
+	mustMkdir(t, filepath.Join(dir, ".git"))
+	mustWriteFile(t, filepath.Join(dir, ".git", "HEAD"),
+		"ref: refs/heads/ma\x1b]8;;http://evil.example\x07click\x1b]8;;\x07in\nEXTRA-ROW\n")
+
+	got := branch(dir)
+	for _, r := range got {
+		if !unicode.IsPrint(r) {
+			t.Fatalf("branch %q still carries the non-printable %q", got, r)
+		}
+	}
+	if strings.Contains(got, "\n") {
+		t.Errorf("branch %q still contains a newline, which adds a row to the bar", got)
 	}
 }
