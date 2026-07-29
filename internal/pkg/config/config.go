@@ -6,7 +6,7 @@
 //   - the proxied statusLine command and its arguments;
 //   - a verbatim backup of the original "statusLine" value from
 //     ~/.claude/settings.json, captured at install time so uninstall can
-//     restore it byte-for-byte;
+//     restore the same value (see Backup for what "same" means here);
 //   - the renderer's segment/row layout;
 //   - the self-update preferences.
 //
@@ -75,7 +75,17 @@ func (p Proxy) ProxyTimeout() time.Duration {
 type Backup struct {
 	// PreviousStatusLine is the original "statusLine" JSON value found in
 	// ~/.claude/settings.json before install. Stored as raw JSON so any
-	// shape (string, object, missing) round-trips exactly.
+	// shape (string, object, missing) survives the round trip.
+	//
+	// The VALUE is preserved, including key order — but not the exact bytes,
+	// and the difference has bitten before. Both writers marshal with
+	// json.MarshalIndent, which re-indents an embedded json.RawMessage to its
+	// new nesting depth, and Go's encoder HTML-escapes the three characters
+	// & < > into their \u0026 \u003c \u003e forms. So a compact one-line
+	// statusLine comes back pretty-printed, and `sh -c "a && b"` comes back
+	// with the ampersands escaped. Both decode to the original value, so
+	// nothing is lost — but compare such round trips as JSON, never with
+	// bytes.Equal.
 	PreviousStatusLine json.RawMessage `json:"previous_status_line,omitempty"`
 }
 
