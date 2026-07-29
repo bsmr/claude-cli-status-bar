@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 func TestRenderModel_DefaultDisplayName(t *testing.T) {
@@ -105,6 +106,21 @@ func TestRenderCwd_FormatFullShowsAbsolutePath(t *testing.T) {
 	p := &payload{Workspace: workspace{CurrentDir: "/home/u/projects/foo"}}
 	if got := renderCwd(p, Segment{Format: "full"}, renderEnv{}); got != "/home/u/projects/foo" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A directory name is filesystem content too, and it reaches the bar the same
+// way a branch name does — live-reproduced with a BEL surviving into stdout.
+// Both the basename and the full-path form have to be covered.
+func TestRenderCwd_StripsControlCharacters(t *testing.T) {
+	p := &payload{Workspace: workspace{CurrentDir: "/home/u/pro\x1b]8;;http://evil\x07j\nEXTRA"}}
+	for _, s := range []Segment{{}, {Format: "full"}} {
+		got := renderCwd(p, s, renderEnv{})
+		for _, r := range got {
+			if !unicode.IsPrint(r) {
+				t.Errorf("format %q: cwd %q still carries the non-printable %q", s.Format, got, r)
+			}
+		}
 	}
 }
 

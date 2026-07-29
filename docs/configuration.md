@@ -507,7 +507,10 @@ Returns `<label>:<name>` from `payload.output_style.name`. Default label is
 
 Returns the working directory from `payload.workspace.current_dir`. Default
 is the basename; `format: "full"` returns the absolute path. Hidden when
-the field is empty.
+the field is empty. Non-printable characters are dropped, in both forms — a
+directory name is filesystem content just like the branch name in
+[`git_branch`](#git_branch), and extracting an archive is enough to put an
+escape sequence into the path this segment prints.
 
 ```json
 {"type": "cwd"}                        // "claude-cli-status-bar"
@@ -636,6 +639,14 @@ layout, e.g. `../../.git/modules/<name>`); any other escape (e.g.
 `../../../etc`) is rejected. With a non-empty `label`, the output is
 prefixed: `"<label>: <branch>"`. Hidden for detached HEAD, malformed
 HEAD, no repo, or empty cwd.
+
+Non-printable characters in the ref name are dropped before rendering.
+`.git/HEAD` is repository content, and a repository can reach you as an
+archive: without this, a crafted HEAD emitted its escape sequences to the
+terminal verbatim, and an embedded newline added a whole extra row to the
+bar. The remaining text is still shown — `\e]8;;url\a` becomes the visible
+`]8;;url` — so nothing disappears silently. Same treatment on
+[`cwd`](#cwd), for the same reason.
 
 The `scope` field selects which repository's branch to report when `cwd`
 is inside a submodule working tree:

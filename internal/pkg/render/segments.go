@@ -120,10 +120,13 @@ func renderCwd(p *payload, s Segment, _ renderEnv) string {
 	if dir == "" {
 		return ""
 	}
+	// A directory name is filesystem content, exactly like the branch name in
+	// .git/HEAD: extracting an archive is enough to put an escape sequence in
+	// the path this segment prints. See sanitizePrintable.
 	if s.Format == "full" {
-		return dir
+		return sanitizePrintable(dir)
 	}
-	return filepath.Base(dir)
+	return sanitizePrintable(filepath.Base(dir))
 }
 
 // renderCost returns the total cost using fmt verb format. Default is
