@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.21` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.22` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -28,8 +28,10 @@ for compatibility with existing setups (see [Background](#background)).
 > taught the `ccsb-wizard` skill not to produce that configuration, and
 > `0.4.19` stopped filesystem content from writing escape sequences into
 > the bar, `0.4.20` fixed the capture filename, which could not be written
-> on Windows at all, and `0.4.21` stopped config writes from dropping
-> top-level keys the running binary does not model).
+> on Windows at all, `0.4.21` stopped config writes from dropping
+> top-level keys the running binary does not model, and `0.4.22` made a bare
+> `ccsb` typed at a terminal print its usage instead of appearing to hang
+> while it waited for a payload).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -184,6 +186,8 @@ Requires Go 1.26.3 or newer (see `go.mod`).
 ## Use
 
 ```bash
+ccsb              # no arguments: render the payload piped in on stdin.
+                  # At a terminal there is no payload, so it prints this help.
 ccsb install      # save current statusLine, replace it with ccsb
 ccsb mode         # print current mode (native or proxy)
 ccsb mode native  # clear proxy block so the native renderer drives ccsb

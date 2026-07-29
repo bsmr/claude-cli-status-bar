@@ -1,7 +1,8 @@
 // Package cli is ccsb's command dispatcher.
 //
 // Without arguments it runs the proxy/fallback statusLine flow used by
-// Claude Code. With a subcommand it manages the install/uninstall/status of
+// Claude Code, unless stdin is a terminal, in which case it prints usage
+// instead. With a subcommand it manages the install/uninstall/status of
 // the ~/.claude/settings.json hook.
 package cli
 
@@ -49,6 +50,13 @@ type Flags struct {
 	// NoColor disables ANSI emission in the native renderer. Resolved by
 	// the caller from the NO_COLOR environment variable.
 	NoColor bool
+	// StdinIsTTY reports whether stdin is a character device. Resolved by
+	// the caller, like NoColor, so Run stays testable without a
+	// pseudo-terminal. Claude Code always pipes a payload, so it is only
+	// ever true when a person invoked ccsb from a shell. It describes the
+	// same stdin the caller hands to Run as the stdin io.Reader argument —
+	// a caller passing a different reader would get an inconsistent pair.
+	StdinIsTTY bool
 }
 
 // ResolvePaths derives Paths from environment values.
@@ -80,9 +88,24 @@ func NewFromOS() (Paths, Flags, error) {
 		Self:          self,
 	})
 	flags := Flags{
-		NoColor: os.Getenv("NO_COLOR") != "",
+		NoColor:    os.Getenv("NO_COLOR") != "",
+		StdinIsTTY: stdinIsTTY(os.Stdin),
 	}
 	return paths, flags, nil
+}
+
+// stdinIsTTY reports whether f is a character device — a terminal, as far as
+// ccsb needs to care. It takes an *os.File rather than reading os.Stdin
+// directly so tests can pass a pipe or a regular file without a
+// pseudo-terminal.
+//
+// Claude Code always pipes the payload, so this is only ever true when a
+// person invoked ccsb from a shell. os.DevNull is a character device too, so
+// a redirect from it counts as interactive; telling the two apart needs a
+// real ioctl probe plus a Windows stub, and nothing invokes ccsb that way.
+func stdinIsTTY(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // UnknownSubcommandError is returned for unrecognised subcommands so callers
@@ -99,6 +122,14 @@ func (e *UnknownSubcommandError) Error() string {
 // statusLine flow.
 func Run(ctx context.Context, p Paths, f Flags, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
+		// A terminal on stdin means a person typed "ccsb" to find out what
+		// it does. Rendering would block in io.ReadAll until they guessed
+		// Ctrl-D. Claude Code always pipes, so it never lands here.
+		if f.StdinIsTTY {
+			printInteractiveHint(stdout)
+			printHelp(stdout)
+			return nil
+		}
 		return runProxy(ctx, p, f, stdin, stdout, stderr)
 	}
 	switch args[0] {
@@ -327,12 +358,24 @@ func yesNo(b bool) string {
 	return "no"
 }
 
+// printInteractiveHint explains why usage is being printed. The help text
+// alone does not tell a first-time caller that ccsb normally consumes a
+// payload on stdin, which is the whole reason a bare invocation used to look
+// like a hang.
+func printInteractiveHint(w io.Writer) {
+	fmt.Fprint(w, `ccsb: stdin is a terminal, so there is no statusLine payload to render.
+      Claude Code invokes ccsb with the payload piped in; see "install" below.
+
+`)
+}
+
 func printHelp(w io.Writer) {
 	const help = `ccsb - Claude Code statusLine provider
 
 Without arguments, ccsb reads the JSON payload from stdin and renders the
 configured statusLine (proxy or built-in fallback). Claude Code invokes it
-via the "statusLine.command" entry in ~/.claude/settings.json.
+via the "statusLine.command" entry in ~/.claude/settings.json. Run from a
+terminal, where there is no payload to read, ccsb prints this help instead.
 
 Subcommands:
   install     Save the current statusLine into ccsb's config and replace it
