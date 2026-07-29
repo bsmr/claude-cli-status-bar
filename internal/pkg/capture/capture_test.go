@@ -22,7 +22,7 @@ func TestSave_WritesPayloadAtExpectedPath(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	want := filepath.Join(dir, "2026-05-10T14:30:45.123456789Z-sess-abc.json")
+	want := filepath.Join(dir, "2026-05-10T14-30-45.123456789Z-sess-abc.json")
 	if path != want {
 		t.Errorf("path: got %q, want %q", path, want)
 	}
@@ -177,7 +177,7 @@ func TestSaveOutput_WritesNeighbourFileWithGivenSuffix(t *testing.T) {
 		t.Fatalf("SaveOutput: %v", err)
 	}
 
-	wantOut := filepath.Join(dir, "2026-05-10T14:30:45.123456789Z-sess-abc.out")
+	wantOut := filepath.Join(dir, "2026-05-10T14-30-45.123456789Z-sess-abc.out")
 	if outPath != wantOut {
 		t.Errorf("output path: got %q, want %q", outPath, wantOut)
 	}
@@ -297,7 +297,7 @@ func TestTimeFromName_ParsesTheBasenameTimestamp(t *testing.T) {
 // parsable name to act on. Content is irrelevant to pruning.
 func writeCapture(t *testing.T, dir string, at time.Time, session, ext string) string {
 	t.Helper()
-	name := at.UTC().Format(time.RFC3339Nano) + "-" + session + "." + ext
+	name := at.UTC().Format("2006-01-02T15-04-05.999999999Z") + "-" + session + "." + ext
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
 		t.Fatalf("WriteFile %s: %v", name, err)
@@ -473,5 +473,109 @@ func TestPrune_RemoveFailureAbortsAndIsReported(t *testing.T) {
 	}
 	if got := remaining(t, dir); len(got) != 2 {
 		t.Errorf("both files should remain, %d do: %v", len(got), got)
+	}
+}
+
+// Every capture write goes through one basename, and until 0.4.20 that name
+// carried two defects the code had reasoned its way up to and then stopped
+// short of: RFC3339Nano's colons, which are illegal in an NTFS filename, and a
+// session id whose character set was policed but whose LENGTH was not.
+// Both fail silently — the bar still renders and exits 0, only the captures
+// never appear.
+func TestSave_NameHasNoCharacterIllegalOnWindows(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 10, 14, 30, 45, 123456789, time.UTC)
+
+	path, err := capture.Save(dir, "sess-abc", []byte(`{}`), now)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// The set Windows rejects in a filename, minus the separators filepath
+	// already owns.
+	for _, bad := range []string{`:`, `<`, `>`, `"`, `|`, `?`, `*`} {
+		if strings.Contains(filepath.Base(path), bad) {
+			t.Errorf("capture name %q contains %q, which cannot be written on Windows",
+				filepath.Base(path), bad)
+		}
+	}
+}
+
+func TestSave_LongSessionIDStillWrites(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 10, 14, 30, 45, 0, time.UTC)
+
+	// Claude Code sends a 36-char UUID; this is what a hostile or buggy
+	// producer sends. Past NAME_MAX every write failed with ENAMETOOLONG,
+	// one stderr line each, and the session captured nothing at all.
+	path, err := capture.Save(dir, strings.Repeat("x", 500), []byte(`{}`), now)
+	if err != nil {
+		t.Fatalf("Save with a 500-char session id: %v", err)
+	}
+	// 255 is NAME_MAX on ext4 and the practical ceiling elsewhere; the
+	// atomic write needs headroom on top for its ".<name>-<random>.tmp".
+	if n := len(filepath.Base(path)); n > 200 {
+		t.Errorf("capture name is %d bytes, too close to NAME_MAX for the temp file to fit", n)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("Save reported %q but nothing is there: %v", path, err)
+	}
+}
+
+func TestSave_LongSessionIDsThatDifferLateStillCollide(t *testing.T) {
+	// Documenting the accepted cost of truncation rather than pretending it
+	// away: two ids sharing the truncated prefix land on the same basename,
+	// so the second write wins. Captures are diagnostic state, and no real
+	// producer sends ids this long.
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 10, 14, 30, 45, 0, time.UTC)
+
+	a, err := capture.Save(dir, strings.Repeat("x", 300)+"AAA", []byte(`{"n":1}`), now)
+	if err != nil {
+		t.Fatalf("Save a: %v", err)
+	}
+	b, err := capture.Save(dir, strings.Repeat("x", 300)+"BBB", []byte(`{"n":2}`), now)
+	if err != nil {
+		t.Fatalf("Save b: %v", err)
+	}
+	if a != b {
+		t.Skip("truncation kept them distinct; nothing to document")
+	}
+	got, err := os.ReadFile(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"n":2}` {
+		t.Errorf("later write should win on collision, got %s", got)
+	}
+}
+
+// TimeFromName must keep reading the colon format: a user upgrading has a
+// capture directory full of it, and `ccsb captures clean` prunes on exactly
+// this parse. Names it cannot parse are left alone forever.
+func TestTimeFromName_StillReadsPreV0420Names(t *testing.T) {
+	at, ok := capture.TimeFromName("2026-05-10T14:30:45.123456789Z-sess-abc.json")
+	if !ok {
+		t.Fatal("a pre-0.4.20 capture name no longer parses; upgrading would orphan every existing capture")
+	}
+	want := time.Date(2026, 5, 10, 14, 30, 45, 123456789, time.UTC)
+	if !at.Equal(want) {
+		t.Errorf("got %v, want %v", at, want)
+	}
+}
+
+func TestTimeFromName_RoundTripsWhatSaveWrites(t *testing.T) {
+	dir := t.TempDir()
+	want := time.Date(2026, 5, 10, 14, 30, 45, 123456789, time.UTC)
+
+	path, err := capture.Save(dir, "sess-abc", []byte(`{}`), want)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, ok := capture.TimeFromName(filepath.Base(path))
+	if !ok {
+		t.Fatalf("TimeFromName cannot read the name Save just wrote: %q", filepath.Base(path))
+	}
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
