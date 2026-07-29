@@ -1,9 +1,9 @@
 name: release
 
-# Triggered by v*.*.* tags pushed to github-origin. The user pushes
-# tags deliberately as part of the release-workflow Gate 3, so a
-# successful tag-to-Release pipeline ride here is the expected
-# completion of every patch ship.
+# Triggered by v*.*.* tags pushed to the `github` remote (renamed from
+# `github-origin` on 2026-07-28). The user pushes tags deliberately as part
+# of the release-workflow Gate 3, so a successful tag-to-Release pipeline
+# ride here is the expected completion of every patch ship.
 on:
   push:
     tags:
