@@ -25,10 +25,12 @@ const procWalkDepth = 16
 // walkProcForTTY walks the parent-PID chain starting at pid, bounded by
 // maxDepth. For each ancestor whose /proc/<pid>/stat line reports a
 // non-zero tty_nr, it opens /proc/<pid>/fd/0 via sizeReader and runs
-// TIOCGWINSZ. The first success wins. Returns (0, 0) when the walk
-// reaches PID 1, exhausts maxDepth, or any statReader call fails.
-// A sizeReader failure for one ancestor does NOT stop the walk —
-// the next ancestor with tty_nr != 0 still gets a chance.
+// TIOCGWINSZ. The first non-zero column count wins. Returns (0, 0) when
+// the walk reaches PID 1, exhausts maxDepth, or any statReader call
+// fails. A sizeReader failure for one ancestor does NOT stop the walk —
+// nor does a success reporting 0 columns, which is what a pty allocated
+// without a size gives; the next ancestor with tty_nr != 0 still gets a
+// chance.
 func walkProcForTTY(
 	pid int,
 	maxDepth int,
@@ -45,7 +47,7 @@ func walkProcForTTY(
 			return 0, 0
 		}
 		if ttyNr != 0 {
-			if c, r, err := sizeReader(fmt.Sprintf("/proc/%d/fd/0", pid)); err == nil {
+			if c, r, err := sizeReader(fmt.Sprintf("/proc/%d/fd/0", pid)); err == nil && c > 0 {
 				return c, r
 			}
 		}
@@ -55,7 +57,9 @@ func walkProcForTTY(
 }
 
 // devTTYWinsizeReader opens /dev/tty and runs TIOCGWINSZ. Returns
-// (0, 0, false) on any error. Package-level var so tests can swap it.
+// (0, 0, false) on any error. ok reports only that the ioctl answered:
+// a pty allocated without a size answers with Col == 0, so callers must
+// check the column count as well. Package-level var so tests can swap it.
 var devTTYWinsizeReader = func() (cols, rows int, ok bool) {
 	f, err := os.Open("/dev/tty")
 	if err != nil {
@@ -106,7 +110,11 @@ func discoverTermSize(cfg Config) (cols, rows int) {
 	if cfg.Width > 0 {
 		return cfg.Width, 0
 	}
-	if c, r, ok := devTTYWinsizeReader(); ok {
+	// ok alone is not enough: TIOCGWINSZ succeeds with Col == 0 on a pty
+	// allocated without a size (script(1), any forkpty caller that never
+	// issues TIOCSWINSZ). Treating that as an answer returns (0, 0) and
+	// starves every later source.
+	if c, r, ok := devTTYWinsizeReader(); ok && c > 0 {
 		return c, r
 	}
 	if c, r, ok := envWinsizeReader(); ok {
