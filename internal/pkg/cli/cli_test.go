@@ -383,10 +383,9 @@ func TestConfigReset_PreservesUninstallBackup(t *testing.T) {
 	// MarshalIndent, which re-indents an embedded json.RawMessage on every
 	// write, so carrying the backup through the extra save/load cycle reset
 	// now performs changes its whitespace. The value is what uninstall owes
-	// the user; the surrounding indentation is not. (The separate claim that
-	// this round-trip is "byte-for-byte" — config/config.go:7-9, README.md:63
-	// — is inaccurate for that reason and for HTML-escaping of & < >; that is
-	// a documentation fix of its own, not this one.)
+	// the user; the surrounding indentation is not. The docs used to call this
+	// round trip "byte-for-byte", which was wrong for that reason and because
+	// Go's encoder escapes & < >; 0.4.16 corrected them.
 	if !jsonEqual(t, got, want) {
 		t.Errorf("restored statusLine: got %s, want %s", got, want)
 	}

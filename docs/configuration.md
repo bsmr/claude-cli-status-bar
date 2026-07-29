@@ -728,12 +728,29 @@ row count. A custom format using `{rows}` therefore renders as
 Emits the running ccsb version as `"v<x.y.z>"`. The version is
 resolved at startup with the first non-empty source winning:
 `-ldflags "-X .../cli.Version=…"` injected at build time, then
-`runtime/debug.ReadBuildInfo().Main.Version` (set by `go install`
-on a tagged module), otherwise the literal `"dev"`. A `"dev"`
-result renders as `"☠ vdev"` (U+2620 SKULL AND CROSSBONES) to
-flag untagged builds, and skips the update check below entirely.
-Hidden when the resolution yields the empty string, so the
-surrounding separator or chevron is dropped.
+`runtime/debug.ReadBuildInfo().Main.Version`, otherwise the literal
+`"dev"`. A `"dev"` result renders as `"☠ vdev"` (U+2620 SKULL AND
+CROSSBONES) and skips the update check below entirely.
+
+What `ReadBuildInfo` actually yields, measured rather than assumed:
+
+| Build | Reported version |
+| --- | --- |
+| release archive (`-X` ldflag) | `0.4.15` |
+| `go install …@v0.4.15`, or `go build` on a clean tagged checkout | `0.4.15` |
+| `go build` at an **untagged** commit in the repo | `0.4.11-0.20260728052304-404e83d2fe2b` |
+| any of the above with a dirty worktree | same, plus `+dirty` |
+| source tarball, or `-buildvcs=false` | `dev` → `☠ vdev` |
+
+So `dev` does **not** mean "untagged" — since Go 1.24 an untagged in-repo
+build gets a VCS pseudo-version instead. This matters because a
+pseudo-version and a `+dirty` suffix both fail `ParseSemver`, so the update
+check below returns nothing at all: no indicator, no skull, no error. That is
+the same failure that shipped in v0.4.7, which reported `0.4.7+dirty` and had
+its update indicator dead for every release user.
+
+The segment is hidden entirely when the resolution yields the empty string,
+so the surrounding separator or chevron is dropped.
 
 When `check_update` is true, the segment also checks
 `github.com/bsmr/claude-cli-status-bar`'s Releases for a newer tag and,

@@ -2,9 +2,17 @@
 // preserving unknown top-level keys.
 //
 // Values are kept as json.RawMessage so any nested shape (objects, arrays,
-// scalars) round-trips exactly. Top-level key order is not preserved (Go
-// maps are unordered) - the file is rewritten with two-space indentation
-// and a trailing newline. Writes are atomic via temp file + rename.
+// scalars) survives: no key a ccsb release does not know about is ever
+// dropped, which matters because this file is the user's, not ccsb's.
+//
+// The round trip preserves VALUES, not bytes. The file is rewritten with
+// two-space indentation and a trailing newline, top-level key order is not
+// preserved (Go maps are unordered), and json.MarshalIndent re-indents each
+// stored RawMessage while HTML-escaping & < > into their \u0026 \u003c
+// \u003e forms. A hand-formatted settings.json therefore comes back
+// reformatted, and anyone keeping it in version control will see a diff.
+// Everything still decodes to the same values. Writes are atomic via temp
+// file + rename.
 package claudesettings
 
 import (

@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.15` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.16` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -22,7 +22,8 @@ for compatibility with existing setups (see [Background](#background)).
 > `0.4.13` corrected the `ccsb-wizard` skill against the real config schema
 > and added tests that keep it there; `0.4.14` made `ccsb doctor` report an
 > installed skill copy that no longer matches the binary; `0.4.15` bounded
-> the proxy child, which could previously hang ccsb indefinitely).
+> the proxy child, which could previously hang ccsb indefinitely; `0.4.16`
+> corrected documentation that had drifted from the code).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -66,7 +67,8 @@ for compatibility with existing setups (see [Background](#background)).
   so input, output, and diagnostic can be paired.
 - **Hook management** — `ccsb install` swaps the `statusLine` entry in
   `~/.claude/settings.json` with the path to this binary and saves the
-  previous value verbatim; `ccsb uninstall` restores it byte-for-byte;
+  previous value verbatim; `ccsb uninstall` restores that value (the JSON
+  value, not the exact bytes — see below);
   `ccsb doctor` auto-installs if the hook drifted, switches to native
   mode if the proxy target is circular or cannot be resolved to an
   executable (resolved through `PATH`, so a bare `npx` counts as found),
@@ -100,7 +102,15 @@ for compatibility with existing setups (see [Background](#background)).
   refuses to overwrite, so they cannot update themselves. Swap the binary
   by hand once and self-update works from then on.
   Set `{"update": {"auto": "patch"}}` in the config to let ccsb install
-  matching releases by itself; it is off unless you say so.
+  matching releases by itself; it is off unless you say so. It is not
+  self-contained, though: the trigger lives in the `version` segment, so it
+  only fires from a layout that renders one with `"check_update": true`.
+  ccsb's own default layout does. A hand-written or wizard-generated `rows`
+  block does **not** — `check_update` is a Go `bool` whose zero value is
+  `false` — so on such a config the background check never runs and
+  `update.auto` sits inert with nothing to indicate it. If updates are not
+  happening, check that first; `ccsb doctor` reports the other causes
+  (Windows, a local build, an unwritable target).
 
 ## Install
 
@@ -139,10 +149,20 @@ The version segment's string is resolved at startup: a downloaded release
 archive carries the version injected at build time via an `-X` ldflag,
 while a `go install` of a tagged version or a local `go build` from a
 checked-out tag reports the tag `runtime/debug.ReadBuildInfo()` stamps
-(`v0.4.8`). An untagged build reports `dev` — Go's `(devel)` placeholder
-is discarded — and the `version` segment then renders a skull marker
-instead of a version. Check out the tag you want shipped if you care
-about the stamp.
+(`v0.4.8`).
+
+An **untagged** build inside the repository does not report `dev`: since Go
+1.24 the toolchain stamps a VCS-derived pseudo-version, so you get something
+like `0.4.11-0.20260728052304-404e83d2fe2b`, plus a `+dirty` suffix when the
+working tree has uncommitted changes. `dev` — and with it the skull marker
+`☠ vdev` — appears only when there is no VCS information at all: a build from
+a source tarball, or one made with `-buildvcs=false` (which is exactly what
+the release pipeline does, injecting the version via `-X` instead).
+
+That distinction matters beyond cosmetics: a pseudo-version and a `+dirty`
+suffix both fail `ParseSemver`, so the update check silently does nothing —
+no indicator, no error, no explanation. Check out the tag you want shipped if
+you care about the stamp or about update notifications.
 
 When `check_update` is enabled (the default in ccsb's own shipped layout —
 the Go zero value is `false`, so a hand-written or wizard-generated config
@@ -172,7 +192,7 @@ ccsb doctor       # diagnose and auto-fix install/proxy problems, check schema d
 ccsb update       # replace this binary with the newest GitHub release
 ccsb install-skill   # install the ccsb-wizard configuration skill
 ccsb uninstall-skill # remove it again
-ccsb uninstall    # restore the previous statusLine byte-for-byte
+ccsb uninstall    # restore the previous statusLine value
 ccsb version      # print the version (aliases: -v, --version)
 ccsb help         # subcommand summary (aliases: -h, --help)
 ```
