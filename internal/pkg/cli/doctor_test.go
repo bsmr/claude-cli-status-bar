@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
 )
 
@@ -288,6 +289,126 @@ func TestAutoUpdateDiagnostic(t *testing.T) {
 		if !strings.Contains(got, "patch") || !strings.Contains(got, "minor") || !strings.Contains(got, "major") {
 			t.Errorf("autoUpdateDiagnostic(%q) = %q, want it to list the accepted values", tt.in, got)
 		}
+	}
+}
+
+// update.auto only ever fires from inside the version segment's update check
+// (renderVersion returns early unless the segment sets check_update), and
+// check_update defaults to false for every hand-written or wizard-generated
+// layout — defaultConfig applies only when the config has no rows at all. The
+// result is an update.auto that looks enabled and never runs, which is exactly
+// how a real machine sat on v0.4.10 while asking to auto-update.
+func TestInertAutoUpdateDiagnostic(t *testing.T) {
+	rows := func(segs ...render.Segment) []render.Row {
+		return []render.Row{{Segments: segs}}
+	}
+
+	tests := []struct {
+		name string
+		cfg  config.Config
+		want bool // true: expect a diagnostic
+	}{
+		{
+			name: "auto off says nothing",
+			cfg: config.Config{
+				Render: render.Config{Rows: rows(render.Segment{Type: "model"})},
+			},
+		},
+		{
+			name: "no rows means defaultConfig, which checks",
+			cfg:  config.Config{Update: config.Update{Auto: "patch"}},
+		},
+		{
+			name: "version segment with check_update is wired up",
+			cfg: config.Config{
+				Update: config.Update{Auto: "patch"},
+				Render: render.Config{Rows: rows(
+					render.Segment{Type: "model"},
+					render.Segment{Type: "version", CheckUpdate: true},
+				)},
+			},
+		},
+		{
+			name: "version segment without check_update is inert",
+			cfg: config.Config{
+				Update: config.Update{Auto: "patch"},
+				Render: render.Config{Rows: rows(render.Segment{Type: "version"})},
+			},
+			want: true,
+		},
+		{
+			name: "no version segment at all is inert",
+			cfg: config.Config{
+				Update: config.Update{Auto: "minor"},
+				Render: render.Config{Rows: rows(render.Segment{Type: "model"})},
+			},
+			want: true,
+		},
+		{
+			name: "an unrecognised auto value is autoUpdateDiagnostic's line, not this one",
+			cfg: config.Config{
+				Update: config.Update{Auto: "always"},
+				Render: render.Config{Rows: rows(render.Segment{Type: "model"})},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inertAutoUpdateDiagnostic(tc.cfg)
+			if !tc.want {
+				if got != "" {
+					t.Errorf("expected silence, got %q", got)
+				}
+				return
+			}
+			if got == "" {
+				t.Fatal("expected a diagnostic, got silence")
+			}
+			for _, want := range []string{"update.auto", "version", "check_update"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("diagnostic %q does not mention %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+// The diagnostic is only worth anything if runDoctor actually prints it.
+func TestDoctorReportsInertAutoUpdate(t *testing.T) {
+	home := t.TempDir()
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	self := filepath.Join(t.TempDir(), "ccsb")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"statusLine":{"type":"command","command":"`+self+`"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.Config{
+		Update: config.Update{Auto: "patch"},
+		Render: render.Config{Rows: []render.Row{{Segments: []render.Segment{{Type: "model"}}}}},
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	p := Paths{Settings: settings, Config: cfgPath, Capture: t.TempDir(), State: t.TempDir(), Self: self}
+	if err := runDoctor(p, &out); err != nil {
+		t.Fatalf("runDoctor: %v", err)
+	}
+	if !strings.Contains(out.String(), "never runs") {
+		t.Errorf("doctor output lacks the inert-auto-update line:\n%s", out.String())
+	}
+	// It reports, it does not repair — and it is not one of the issues doctor
+	// acted on, so the tally must still read "no issues found".
+	if !strings.Contains(out.String(), "no issues found") {
+		t.Errorf("the diagnostic must not count as a fixed issue:\n%s", out.String())
 	}
 }
 
