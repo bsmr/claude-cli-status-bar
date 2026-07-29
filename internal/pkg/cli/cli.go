@@ -145,6 +145,7 @@ func runProxy(ctx context.Context, p Paths, f Flags, stdin io.Reader, stdout, st
 	return statusline.Run(ctx, statusline.Options{
 		ProxyCommand: cfg.Proxy.Command,
 		ProxyArgs:    cfg.Proxy.Args,
+		ProxyTimeout: cfg.Proxy.ProxyTimeout(),
 		CaptureDir:   p.Capture,
 		StateDir:     p.State,
 		Render:       cfg.Render,

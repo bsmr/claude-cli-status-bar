@@ -21,6 +21,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/fileutil"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
@@ -39,6 +40,35 @@ type Config struct {
 type Proxy struct {
 	Command string   `json:"command,omitempty"`
 	Args    []string `json:"args,omitempty"`
+	// Timeout bounds the proxy child, as a Go duration string ("10s", "2m").
+	// Empty or unparsable means DefaultProxyTimeout; an explicit "0" means no
+	// limit at all — the pre-0.4.15 behaviour, for a proxy known to be slow.
+	Timeout string `json:"timeout,omitempty"`
+}
+
+// DefaultProxyTimeout bounds a proxy child when the config does not say
+// otherwise. Generous on purpose: the documented default proxy is
+// `npx -y ccstatusline@latest`, and a cold npx run fetches from the registry
+// before printing anything. The point is to make a hang finite, not to police
+// a slow proxy.
+const DefaultProxyTimeout = 10 * time.Second
+
+// ProxyTimeout resolves Proxy.Timeout, falling back to DefaultProxyTimeout for
+// an empty or unparsable value. A parsed zero (or negative) is returned as
+// zero, which callers treat as "no limit" — that is an explicit opt-out and
+// must not be silently turned back into the default.
+func (p Proxy) ProxyTimeout() time.Duration {
+	if p.Timeout == "" {
+		return DefaultProxyTimeout
+	}
+	d, err := time.ParseDuration(p.Timeout)
+	if err != nil {
+		return DefaultProxyTimeout
+	}
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 // Backup holds state ccsb needs to undo its own changes.

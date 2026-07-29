@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.14` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.15` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -21,7 +21,8 @@ for compatibility with existing setups (see [Background](#background)).
 > `ccsb doctor` from deleting a proxy command it only failed to resolve;
 > `0.4.13` corrected the `ccsb-wizard` skill against the real config schema
 > and added tests that keep it there; `0.4.14` made `ccsb doctor` report an
-> installed skill copy that no longer matches the binary).
+> installed skill copy that no longer matches the binary; `0.4.15` bounded
+> the proxy child, which could previously hang ccsb indefinitely).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -80,6 +81,8 @@ for compatibility with existing setups (see [Background](#background)).
   setting to reset.
 - **Proxy mode (compatibility)** — when a proxy command is configured,
   ccsb forwards the stdin payload to it and prints its stdout verbatim.
+  The child is bounded by `proxy.timeout` (default 10s, `"0"` disables)
+  so a proxy stalling on a dead network cannot hang the status bar.
   Useful for setups that already have a different statusLine renderer in
   place — ccsb sits in front of it for capture and schema-drift logging
   while the existing renderer keeps driving the visible bar.

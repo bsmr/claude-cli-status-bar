@@ -116,3 +116,44 @@ func TestRun_NilStdoutAndStderrAreAccepted(t *testing.T) {
 		t.Errorf("nil writers should be accepted: %v", err)
 	}
 }
+
+// A cancelled context already returned promptly before this change. What was
+// missing is that nobody ever SET a deadline, so a proxy that hangs — npx
+// stalling on a dead network is the realistic case — hung ccsb with it, on
+// every status update, forever. The error has to name the timeout: without
+// that the user sees only "signal: killed" and has nothing to act on.
+func TestRun_DeadlineExceededIsReportedAsATimeout(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := proxy.Run(ctx, "sh", []string{"-c", "sleep 5"}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected an error when the deadline expires")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error must name the timeout, got: %v", err)
+	}
+	// The message also states the limit, but the exact figure is not asserted:
+	// it is derived from the context's remaining time at start, so scheduling
+	// turns an even 50ms into 49.9ms often enough to make that flaky.
+	if !strings.Contains(err.Error(), "sh") {
+		t.Errorf("error should still name the command, got: %v", err)
+	}
+}
+
+// A caller-cancelled context (SIGINT/SIGTERM) is not a proxy fault and must
+// not be reported as one.
+func TestRun_PlainCancellationIsNotReportedAsATimeout(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+
+	err := proxy.Run(ctx, "sh", []string{"-c", "sleep 5"}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected an error when cancelled")
+	}
+	if strings.Contains(err.Error(), "timed out") {
+		t.Errorf("a plain cancel must not be described as a timeout, got: %v", err)
+	}
+}

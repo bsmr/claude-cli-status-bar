@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/render"
@@ -235,5 +236,55 @@ func TestUpdateBlockOmittedWhenEmpty(t *testing.T) {
 		if strings.EqualFold(k, "update") {
 			t.Errorf("saved config has key %q — check the json tag:\n%s", k, blob)
 		}
+	}
+}
+
+func TestProxyTimeout(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{"absent falls back to the default", "", config.DefaultProxyTimeout},
+		{"explicit duration", "3s", 3 * time.Second},
+		{"minutes", "2m", 2 * time.Minute},
+		// An explicit zero is an opt-out, not a missing value: it must not be
+		// turned back into the default, or there would be no way to keep the
+		// old unbounded behaviour.
+		{"explicit zero means no limit", "0", 0},
+		{"explicit zero with unit", "0s", 0},
+		// Garbage falls back rather than failing the whole config: a status
+		// bar that vanishes because of a typo in a timeout would be a worse
+		// outcome than a sane default.
+		{"unparsable falls back", "soon", config.DefaultProxyTimeout},
+		{"negative clamps to no limit", "-5s", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := config.Proxy{Timeout: tc.value}.ProxyTimeout()
+			if got != tc.want {
+				t.Errorf("ProxyTimeout(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+// The timeout must survive a config round-trip, or `ccsb mode` and doctor
+// would quietly drop a value the user set.
+func TestProxyTimeoutRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := config.Config{Proxy: config.Proxy{Command: "npx", Timeout: "45s"}}
+	if err := config.Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Proxy.Timeout != "45s" {
+		t.Errorf("timeout: got %q, want %q", got.Proxy.Timeout, "45s")
+	}
+	if got.Proxy.ProxyTimeout() != 45*time.Second {
+		t.Errorf("resolved: got %v, want 45s", got.Proxy.ProxyTimeout())
 	}
 }

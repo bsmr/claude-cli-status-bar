@@ -17,7 +17,7 @@ every field).
 
 ```json
 {
-  "proxy":  { "command": "npx", "args": ["-y", "ccstatusline@latest"] },
+  "proxy":  { "command": "npx", "args": ["-y", "ccstatusline@latest"], "timeout": "10s" },
   "backup": { "previous_status_line": { /* … */ } },
   "render": { "rows": [ /* … */ ], "separator": " | " },
   "update": { "auto": "patch" }
@@ -26,7 +26,7 @@ every field).
 
 | Key      | Purpose                                                                                |
 | -------- | -------------------------------------------------------------------------------------- |
-| `proxy`  | When `proxy.command` is non-empty, ccsb forwards the payload to that child process and prints its stdout. When empty (or the key is absent), the in-binary native renderer drives the status line. Toggle with `ccsb mode native` / `ccsb mode proxy`. |
+| `proxy`  | When `proxy.command` is non-empty, ccsb forwards the payload to that child process and prints its stdout. When empty (or the key is absent), the in-binary native renderer drives the status line. Toggle with `ccsb mode native` / `ccsb mode proxy`. `proxy.timeout` bounds the child — see [`proxy.timeout`](#proxytimeout). |
 | `backup` | Holds the verbatim `statusLine` value that was in `~/.claude/settings.json` at install time, so `ccsb uninstall` can restore it. Never written by `ccsb mode`. |
 | `render` | Native-renderer config. Ignored while proxy mode is active. |
 | `update` | Opt-in self-update preferences. Absent (the default) means ccsb never installs an update by itself. See [`update`](#update). |
@@ -898,6 +898,39 @@ healthy — useful to spot the moment Claude Code rolls out a payload
 schema bump. The state file is initialised silently on first sight
 of a `schema_version` value; payloads that omit the field do not
 erase the stored value.
+
+## `proxy.timeout`
+
+Bounds how long the proxy child may run, as a Go duration string:
+
+```json
+{"proxy": {"command": "npx", "args": ["-y", "ccstatusline@latest"], "timeout": "10s"}}
+```
+
+| Value | Effect |
+| --- | --- |
+| absent, empty, or unparsable | `10s` (the default) |
+| a duration, e.g. `"3s"`, `"2m"` | that limit |
+| `"0"` (or any negative value) | **no limit** — the pre-0.4.15 behaviour |
+
+Why it exists: nothing in ccsb used to bound the child. The only context on
+that path is the process-wide signal context, which never expires, so a proxy
+that stalled — `npx` against a dead network is the realistic case — stalled
+ccsb with it, on every status update, indefinitely. The default is deliberately
+generous rather than tight: a cold `npx` run fetches from the registry before
+printing anything, and the goal is to make a hang finite, not to police a slow
+proxy.
+
+On expiry the child is killed and ccsb exits non-zero, so Claude Code shows no
+status bar for that update, with `proxy: <cmd>: timed out after 10s` on stderr.
+That is the same outcome as any other proxy failure; it does **not** fall back
+to the native renderer, because the proxy may already have written part of a
+line and a second one would corrupt the output.
+
+An unparsable value falls back to the default rather than failing the config:
+losing the whole status bar over a typo in a timeout would be the worse
+outcome. `"0"` is honoured exactly as written — it is an explicit opt-out, and
+the only way back to unbounded behaviour for a proxy you know to be slow.
 
 ## Colors
 
