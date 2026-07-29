@@ -10,7 +10,7 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.19` — stable and actively developed (`0.3.0` added the
+> **Status:** `0.4.20` — stable and actively developed (`0.3.0` added the
 > `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
 > per-part bar/label colour, token-fraction placement, and an opt-in
 > `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
@@ -27,7 +27,8 @@ for compatibility with existing setups (see [Background](#background)).
 > `ccsb doctor` report an `update.auto` that can never fire, `0.4.18`
 > taught the `ccsb-wizard` skill not to produce that configuration, and
 > `0.4.19` stopped filesystem content from writing escape sequences into
-> the bar).
+> the bar, and `0.4.20` fixed the capture filename, which could not be
+> written on Windows at all).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
@@ -65,7 +66,7 @@ for compatibility with existing setups (see [Background](#background)).
   persisted under `$XDG_STATE_HOME/ccsb/schema_version` so any upstream
   schema bump appears as an explicit transition in the next `.diag`.
 - **Capture** — every invocation writes the raw stdin JSON to
-  `$XDG_STATE_HOME/ccsb/captures/<RFC3339Nano>-<session_id>.json`, the
+  `$XDG_STATE_HOME/ccsb/captures/<timestamp>-<session_id>.json`, the
   rendered statusLine bytes to `.out`, any proxy stderr to `.err`, and
   any schema-drift diagnostic to `.diag` — all sharing the same basename
   so input, output, and diagnostic can be paired.
@@ -275,10 +276,20 @@ ccsb captures clean                     # remove all captures
 ccsb captures clean --older-than 7d     # keep the last week (also accepts 24h, 90m)
 ```
 
-Only files whose name *starts* with an RFC3339 UTC timestamp are considered,
-so `notes.txt` survives — but anything you name with a leading timestamp is
+Only files whose name *starts* with a UTC timestamp are considered, so
+`notes.txt` survives — but anything you name with a leading timestamp is
 treated as a capture and removed. Keep your own files elsewhere, or give them
 a name that does not start with one.
+
+The timestamp is RFC3339Nano with `-` in place of `:`, e.g.
+`2026-07-29T08-01-15.720561317Z`. Since `0.4.20`: `:` is not a legal filename
+character on NTFS, so the plain RFC3339 form made every capture write fail on
+Windows — silently, because the bar renders and exits 0 either way. Names in
+the old form are still recognised, so a capture directory that predates the
+change keeps pruning normally. The session id is bounded at 64 characters for
+the same class of reason (past NAME_MAX every write failed with
+ENAMETOOLONG); Claude Code sends a 36-character UUID, so nothing real is
+truncated.
 
 ## Roadmap
 

@@ -914,9 +914,15 @@ ccsb captures clean --older-than 7d     # keep anything newer than 7 days
 ```
 
 `--older-than` accepts a day count (`7d`, `90d`, up to `106751d`) or any Go
-duration (`24h`, `90m`, `1h30m`). The age comes from the RFC3339Nano
-timestamp in each filename, not from the filesystem, so touching a file does
-not make it look fresh.
+duration (`24h`, `90m`, `1h30m`). The age comes from the timestamp in each
+filename, not from the filesystem, so touching a file does not make it look
+fresh.
+
+That timestamp is RFC3339Nano with `-` in place of `:`
+(`2026-07-29T08-01-15.720561317Z`) — `:` cannot appear in an NTFS filename,
+and until `0.4.20` that made every capture write fail on Windows without
+saying so. Both spellings are parsed, so an existing capture directory stays
+prunable across the upgrade.
 
 Only names that *start* with such a timestamp are candidates; everything
 else — `notes.txt`, a `README`, any subdirectory — is left alone. Note the
