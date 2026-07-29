@@ -259,14 +259,19 @@ func TestWalkProcForTTY_ParseStatErrorAbortsWalk(t *testing.T) {
 func TestDiscoverTermSize_WidthOverrideWins(t *testing.T) {
 	// When Config.Width > 0, the orchestrator must short-circuit
 	// before any reader is invoked.
-	prevDev, prevStat, prevFD := devTTYWinsizeReader, procStatReader, procFDWinsizeReader
+	prevDev, prevEnv, prevStat, prevFD := devTTYWinsizeReader, envWinsizeReader, procStatReader, procFDWinsizeReader
 	defer func() {
 		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
 		procStatReader = prevStat
 		procFDWinsizeReader = prevFD
 	}()
 	devTTYWinsizeReader = func() (int, int, bool) {
 		t.Fatal("devTTYWinsizeReader must not be called when Width > 0")
+		return 0, 0, false
+	}
+	envWinsizeReader = func() (int, int, bool) {
+		t.Fatal("envWinsizeReader must not be called when an earlier source wins")
 		return 0, 0, false
 	}
 	procStatReader = func(pid int) ([]byte, error) {
@@ -284,13 +289,18 @@ func TestDiscoverTermSize_WidthOverrideWins(t *testing.T) {
 }
 
 func TestDiscoverTermSize_DevTTYWinsThenProcSkipped(t *testing.T) {
-	prevDev, prevStat, prevFD := devTTYWinsizeReader, procStatReader, procFDWinsizeReader
+	prevDev, prevEnv, prevStat, prevFD := devTTYWinsizeReader, envWinsizeReader, procStatReader, procFDWinsizeReader
 	defer func() {
 		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
 		procStatReader = prevStat
 		procFDWinsizeReader = prevFD
 	}()
 	devTTYWinsizeReader = func() (int, int, bool) { return 96, 24, true }
+	envWinsizeReader = func() (int, int, bool) {
+		t.Fatal("envWinsizeReader must not be called when an earlier source wins")
+		return 0, 0, false
+	}
 	procStatReader = func(pid int) ([]byte, error) {
 		t.Fatal("procStatReader must not be called when /dev/tty succeeds")
 		return nil, nil
@@ -306,13 +316,16 @@ func TestDiscoverTermSize_DevTTYWinsThenProcSkipped(t *testing.T) {
 }
 
 func TestDiscoverTermSize_FallsBackToProcWalk(t *testing.T) {
-	prevDev, prevStat, prevFD := devTTYWinsizeReader, procStatReader, procFDWinsizeReader
+	prevDev, prevEnv, prevStat, prevFD := devTTYWinsizeReader, envWinsizeReader, procStatReader, procFDWinsizeReader
 	defer func() {
 		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
 		procStatReader = prevStat
 		procFDWinsizeReader = prevFD
 	}()
 	devTTYWinsizeReader = func() (int, int, bool) { return 0, 0, false }
+	// Neutralised so the test does not depend on the ambient COLUMNS.
+	envWinsizeReader = func() (int, int, bool) { return 0, 0, false }
 	procStatReader = func(pid int) ([]byte, error) {
 		// First ancestor has tty_nr=42.
 		return procStatStub("parent", 1, 42), nil
@@ -327,13 +340,16 @@ func TestDiscoverTermSize_FallsBackToProcWalk(t *testing.T) {
 }
 
 func TestDiscoverTermSize_AllSourcesFail(t *testing.T) {
-	prevDev, prevStat, prevFD := devTTYWinsizeReader, procStatReader, procFDWinsizeReader
+	prevDev, prevEnv, prevStat, prevFD := devTTYWinsizeReader, envWinsizeReader, procStatReader, procFDWinsizeReader
 	defer func() {
 		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
 		procStatReader = prevStat
 		procFDWinsizeReader = prevFD
 	}()
 	devTTYWinsizeReader = func() (int, int, bool) { return 0, 0, false }
+	// Neutralised so the test does not depend on the ambient COLUMNS.
+	envWinsizeReader = func() (int, int, bool) { return 0, 0, false }
 	procStatReader = func(pid int) ([]byte, error) {
 		return nil, errors.New("simulated ENOENT")
 	}
@@ -344,6 +360,47 @@ func TestDiscoverTermSize_AllSourcesFail(t *testing.T) {
 	cols, rows := discoverTermSize(Config{})
 	if cols != 0 || rows != 0 {
 		t.Errorf("got (%d, %d), want (0, 0)", cols, rows)
+	}
+}
+
+func TestDiscoverTermSize_EnvUsedWhenDevTTYFails(t *testing.T) {
+	prevDev, prevEnv, prevStat, prevFD := devTTYWinsizeReader, envWinsizeReader, procStatReader, procFDWinsizeReader
+	defer func() {
+		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
+		procStatReader = prevStat
+		procFDWinsizeReader = prevFD
+	}()
+	devTTYWinsizeReader = func() (int, int, bool) { return 0, 0, false }
+	envWinsizeReader = func() (int, int, bool) { return 120, 40, true }
+	procStatReader = func(pid int) ([]byte, error) {
+		t.Fatal("procStatReader must not be called when the environment supplies a size")
+		return nil, nil
+	}
+	procFDWinsizeReader = func(path string) (int, int, error) {
+		t.Fatal("procFDWinsizeReader must not be called when the environment supplies a size")
+		return 0, 0, nil
+	}
+	cols, rows := discoverTermSize(Config{})
+	if cols != 120 || rows != 40 {
+		t.Errorf("got (%d, %d), want (120, 40)", cols, rows)
+	}
+}
+
+func TestDiscoverTermSize_DevTTYWinsOverEnv(t *testing.T) {
+	prevDev, prevEnv := devTTYWinsizeReader, envWinsizeReader
+	defer func() {
+		devTTYWinsizeReader = prevDev
+		envWinsizeReader = prevEnv
+	}()
+	devTTYWinsizeReader = func() (int, int, bool) { return 96, 24, true }
+	envWinsizeReader = func() (int, int, bool) {
+		t.Fatal("envWinsizeReader must not be called when /dev/tty succeeds")
+		return 0, 0, false
+	}
+	cols, rows := discoverTermSize(Config{})
+	if cols != 96 || rows != 24 {
+		t.Errorf("got (%d, %d), want (96, 24)", cols, rows)
 	}
 }
 

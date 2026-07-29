@@ -2,8 +2,9 @@
 
 // Unix-side terminal-size detection. The /dev/tty open + TIOCGWINSZ
 // ioctl and the /proc parent-chain walk are Linux/Darwin/BSD features;
-// Windows uses the stub in tty_windows.go which always reports an
-// unknown size unless cfg.Width is set explicitly.
+// Windows uses the stub in tty_windows.go, which falls back to
+// COLUMNS/LINES (see tty_env.go) and otherwise reports an unknown size
+// unless cfg.Width is set explicitly.
 
 package render
 
@@ -90,17 +91,25 @@ var procFDWinsizeReader = func(path string) (cols, rows int, err error) {
 }
 
 // discoverTermSize returns the detected terminal cols×rows. Detection
-// order, first non-zero cols wins: Config.Width > /dev/tty > /proc
-// parent-chain walk from PPID > (0, 0). The rows component may be 0
-// even when cols is non-zero (the Config.Width branch only sets cols).
-// Callers receive (0, 0) when every source fails — that signals "size
-// unknown" and downstream renderers (Powerline pad, tty_size segment)
-// gracefully degrade.
+// order, first non-zero cols wins: Config.Width > /dev/tty > COLUMNS and
+// LINES > /proc parent-chain walk from PPID > (0, 0). The rows component
+// may be 0 even when cols is non-zero (the Config.Width branch only sets
+// cols, and so does the environment when LINES is unusable). Callers
+// receive (0, 0) when every source fails — that signals "size unknown"
+// and downstream renderers (Powerline pad, tty_size segment) gracefully
+// degrade.
+//
+// Under Claude Code /dev/tty is unreachable, so the environment is what
+// answers in practice and the /proc walk is the fallback for hosts that
+// export no COLUMNS.
 func discoverTermSize(cfg Config) (cols, rows int) {
 	if cfg.Width > 0 {
 		return cfg.Width, 0
 	}
 	if c, r, ok := devTTYWinsizeReader(); ok {
+		return c, r
+	}
+	if c, r, ok := envWinsizeReader(); ok {
 		return c, r
 	}
 	return walkProcForTTY(os.Getppid(), procWalkDepth, procStatReader, procFDWinsizeReader)

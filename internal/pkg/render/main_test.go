@@ -16,7 +16,16 @@ import (
 // alternative is seven assertions silently depending on a toolchain detail
 // nobody restates when it changes. Tests that exercise blocking opt in
 // explicitly via stubBuildInfo.
+//
+// It also clears COLUMNS and LINES for the whole package, so no test
+// silently depends on the terminal that happens to run `go test`: the
+// env stage of discoverTermSize would otherwise answer for every render
+// call that leaves Config.Width at its zero value. Tests that need the
+// variables set use t.Setenv, which restores the prior value (here,
+// unset) per test.
 func TestMain(m *testing.M) {
 	buildInfoFunc = func() (*debug.BuildInfo, bool) { return &debug.BuildInfo{}, true }
+	os.Unsetenv("COLUMNS")
+	os.Unsetenv("LINES")
 	os.Exit(m.Run())
 }

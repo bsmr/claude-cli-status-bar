@@ -80,7 +80,9 @@ claude-cli-status-bar/
 │       │                             entry point
 │       ├── render/                 # the native renderer: payload parsing, the segment registry,
 │       │                             Powerline rows, palettes, reflow/shrink, terminal-size
-│       │                             detection, schema diagnostics, git branch/dirty lookups,
+│       │                             detection (cfg.Width → /dev/tty → COLUMNS/LINES → /proc
+│       │                             walk; tty_env.go carries no build tag so Windows shares it),
+│       │                             schema diagnostics, git branch/dirty lookups,
 │       │                             the GitHub release check (updatecheck.go), and the
 │       │                             single-flight lock primitives shared by both out-of-band
 │       │                             refreshers (singleflight.go)

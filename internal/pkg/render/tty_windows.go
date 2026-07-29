@@ -1,23 +1,31 @@
 //go:build windows
 
 // Windows-side terminal-size detection. ccsb has no win32-console
-// dependency (yet), so on Windows the renderer falls back to the
-// explicit Config.Width override or treats the terminal width as
-// unknown. The terminal-aware layout features (wrap, max_width,
-// min_cols, right-align padding, Powerline bg-fill) gracefully
-// degrade to "no detection" mode in that case.
+// dependency (yet), so on Windows the renderer resolves the size from the
+// explicit Config.Width override, then from COLUMNS/LINES (see
+// tty_env.go, which carries no build tag for exactly this reason), and
+// otherwise treats the terminal width as unknown. The terminal-aware
+// layout features (wrap, max_width, min_cols, right-align padding,
+// Powerline bg-fill) gracefully degrade to "no detection" mode in that
+// case.
 
 package render
 
 import "errors"
 
-// discoverTermSize on Windows honours the explicit Config.Width
-// override and otherwise returns (0, 0). The rows component is
-// always 0 here; the tty_size segment will render as "<width>×0"
-// until win32 console support is added.
+// discoverTermSize on Windows honours the explicit Config.Width override,
+// then COLUMNS and LINES. It returns (0, 0) when neither is available.
+// The rows component is 0 unless LINES supplied one; the tty_size segment
+// renders "<width>×0" in that case until win32 console support is added.
+//
+// Note that this function's behaviour is not exercised by the test suite:
+// the pipeline cross-compiles for Windows but runs tests on Linux only.
 func discoverTermSize(cfg Config) (cols, rows int) {
 	if cfg.Width > 0 {
 		return cfg.Width, 0
+	}
+	if c, r, ok := envWinsizeReader(); ok {
+		return c, r
 	}
 	return 0, 0
 }
