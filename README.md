@@ -18,7 +18,9 @@ for compatibility with existing setups (see [Background](#background)).
 > `0.4.10` added the opt-in `update.auto` config block that lets the
 > renderer run `ccsb update` for you; `0.4.11` closed two paths that could
 > destroy the statusLine ccsb had promised to restore; `0.4.12` stopped
-> `ccsb doctor` from deleting a proxy command it only failed to resolve).
+> `ccsb doctor` from deleting a proxy command it only failed to resolve;
+> `0.4.13` corrected the `ccsb-wizard` skill against the real config schema
+> and added tests that keep it there).
 > The native renderer is the
 > primary mode: a fully configurable Powerline pipeline with an
 > out-of-the-box default layout (model + mode + context bar + 5h/7d
