@@ -224,6 +224,11 @@ func runDoctor(p Paths, stdout io.Writer) error {
 	if diag := autoUpdateDiagnostic(cfg.Update.Auto); diag != "" {
 		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
 	}
+	// Reported, never repaired — see skillDiagnostic. It is also not counted in
+	// `fixed`, so "no issues found" still refers to what doctor actually acted on.
+	if diag := skillDiagnostic(p); diag != "" {
+		fmt.Fprintf(stdout, "ccsb: doctor: %s\n", diag)
+	}
 	return nil
 }
 
