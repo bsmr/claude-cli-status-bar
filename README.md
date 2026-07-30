@@ -10,10 +10,11 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.24` — stable and actively developed. The native renderer
-> is the primary mode; proxying an existing `statusLine` command is a
-> compatibility fallback. [What it does](#what-it-does) covers the features,
-> [Roadmap](#roadmap) covers what each series added.
+> **Status:** stable and actively developed. The native renderer is the
+> primary mode; proxying an existing `statusLine` command is a compatibility
+> fallback. [What it does](#what-it-does) covers the features and
+> [Roadmap](#roadmap) what each series added; the current version is on the
+> [GitHub Releases page](https://github.com/bsmr/claude-cli-status-bar/releases).
 
 ## What it does
 
