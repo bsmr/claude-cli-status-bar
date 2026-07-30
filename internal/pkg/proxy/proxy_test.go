@@ -157,3 +157,32 @@ func TestRun_PlainCancellationIsNotReportedAsATimeout(t *testing.T) {
 		t.Errorf("a plain cancel must not be described as a timeout, got: %v", err)
 	}
 }
+
+func TestRun_StartFailureIsMarkedNotStarted(t *testing.T) {
+	t.Parallel()
+	// A command that cannot be resolved never runs, so it cannot have
+	// written a byte. Callers rely on that to fall back safely.
+	err := proxy.Run(context.Background(), "/nonexistent/ccsb-test-binary", nil, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for nonexistent command")
+	}
+	if !errors.Is(err, proxy.ErrNotStarted) {
+		t.Errorf("expected ErrNotStarted, got %v", err)
+	}
+}
+
+func TestRun_RanAndFailedIsNotMarkedNotStarted(t *testing.T) {
+	t.Parallel()
+	// The counterpart: a child that ran and exited non-zero MAY have
+	// written a partial line, so it must not be reported as unstarted.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	err := proxy.Run(context.Background(), "sh", []string{"-c", "exit 3"}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for non-zero exit")
+	}
+	if errors.Is(err, proxy.ErrNotStarted) {
+		t.Errorf("a child that ran must not be reported as unstarted: %v", err)
+	}
+}

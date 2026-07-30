@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -159,24 +160,23 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 			defer cancel()
 		}
 		runErr = proxy.Run(pctx, opts.ProxyCommand, opts.ProxyArgs, raw, outW, errW)
+
+		// A proxy that never started wrote nothing, so rendering natively
+		// cannot corrupt a partial line — and it is strictly better than
+		// the alternative: returning an error here exits non-zero, and a
+		// non-zero exit makes Claude Code show no status bar at all. The
+		// configuration is left alone; the reason goes to stderr, and
+		// `ccsb doctor` reports it too.
+		//
+		// Deliberately NOT extended to a proxy that ran and then failed or
+		// timed out (0.4.15): that child may already have emitted part of a
+		// line, and rendering over it would produce a corrupted bar.
+		if errors.Is(runErr, proxy.ErrNotStarted) {
+			fmt.Fprintf(errW, "ccsb: %s — falling back to the native renderer\n", runErr)
+			runErr = renderNative(opts, p, raw, outW)
+		}
 	} else {
-		cwd := p.Workspace.CurrentDir
-		if cwd == "" {
-			cwd = p.Workspace.ProjectDir
-		}
-		rendered, rerr := render.Render(render.Options{
-			Config:     opts.Render,
-			Cwd:        cwd,
-			NoColor:    opts.NoColor,
-			Version:    opts.Version,
-			StateDir:   opts.StateDir,
-			AutoUpdate: opts.AutoUpdate,
-		}, raw)
-		if rerr != nil {
-			runErr = fmt.Errorf("statusline: render: %w", rerr)
-		} else if _, werr := fmt.Fprintln(outW, rendered); werr != nil {
-			runErr = fmt.Errorf("statusline: write: %w", werr)
-		}
+		runErr = renderNative(opts, p, raw, outW)
 	}
 
 	if capturing {
@@ -193,6 +193,31 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	}
 
 	return runErr
+}
+
+// renderNative renders the built-in layout and writes it to out. It is the
+// path taken when no proxy is configured, and the fallback when a configured
+// proxy could not be started at all.
+func renderNative(opts Options, p payload, raw []byte, out io.Writer) error {
+	cwd := p.Workspace.CurrentDir
+	if cwd == "" {
+		cwd = p.Workspace.ProjectDir
+	}
+	rendered, err := render.Render(render.Options{
+		Config:     opts.Render,
+		Cwd:        cwd,
+		NoColor:    opts.NoColor,
+		Version:    opts.Version,
+		StateDir:   opts.StateDir,
+		AutoUpdate: opts.AutoUpdate,
+	}, raw)
+	if err != nil {
+		return fmt.Errorf("statusline: render: %w", err)
+	}
+	if _, err := fmt.Fprintln(out, rendered); err != nil {
+		return fmt.Errorf("statusline: write: %w", err)
+	}
+	return nil
 }
 
 // errIgnoringWriter wraps an io.Writer and reports every write as fully

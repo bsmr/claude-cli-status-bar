@@ -236,6 +236,19 @@ func runInstall(p Paths, stdout io.Writer) error {
 	// backup exists the proxy block belongs to the user (`ccsb mode`,
 	// `ccsb doctor`), and re-deriving it here would silently undo a
 	// deliberate native-mode choice.
+	// The flip side of that write-once invariant: when a backup already
+	// exists but settings.json points somewhere else, the entry found here
+	// is about to be overwritten and CANNOT be saved — keeping it would
+	// destroy the original the uninstall owes back. It is still the user's
+	// configuration, so name it instead of dropping it in silence. Reported
+	// below, after both writes have succeeded.
+	var discarded json.RawMessage
+	if !alreadyHooked && len(cfg.Backup.PreviousStatusLine) > 0 {
+		if existing, ok := claudesettings.GetStatusLine(s); ok {
+			discarded = existing
+		}
+	}
+
 	if !alreadyHooked && len(cfg.Backup.PreviousStatusLine) == 0 {
 		if existing, ok := claudesettings.GetStatusLine(s); ok {
 			cfg.Backup.PreviousStatusLine = existing
@@ -281,6 +294,10 @@ func runInstall(p Paths, stdout io.Writer) error {
 		fmt.Fprintln(stdout, "ccsb: already installed; backup preserved")
 	} else {
 		fmt.Fprintln(stdout, "ccsb: installed")
+	}
+	if len(discarded) > 0 {
+		fmt.Fprintf(stdout, "ccsb: replaced statusLine %s — not saved: the backup from the "+
+			"first install is kept instead (see `ccsb status`)\n", discarded)
 	}
 	return nil
 }
@@ -335,7 +352,7 @@ func runStatus(p Paths, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "ccsb: mode:     %s\n", currentMode(cfg))
 	if cfg.Proxy.Command != "" {
 		args := strings.Join(cfg.Proxy.Args, " ")
-		if issue := proxyIssue(cfg.Proxy.Command, p.Self); issue != "" {
+		if issue, _ := proxyIssue(cfg.Proxy.Command, p.Self); issue != "" {
 			fmt.Fprintf(stdout, "ccsb: proxy:    %s %s  [WARNING: %s]\n", cfg.Proxy.Command, args, issue)
 		} else {
 			fmt.Fprintf(stdout, "ccsb: proxy:    %s %s\n", cfg.Proxy.Command, args)
@@ -378,9 +395,15 @@ via the "statusLine.command" entry in ~/.claude/settings.json. Run from a
 terminal, where there is no payload to read, ccsb prints this help instead.
 
 Subcommands:
-  install     Save the current statusLine into ccsb's config and replace it
-              in settings.json with this binary so Claude Code calls ccsb.
-  uninstall   Restore the previous statusLine from the saved backup.
+  install     Replace the statusLine in settings.json with this binary so
+              Claude Code calls ccsb. On the FIRST install the entry found
+              there is saved into ccsb's config as the uninstall backup; an
+              existing backup is never overwritten, so an entry set after
+              that is replaced without being saved — ccsb names it when it
+              happens.
+  uninstall   Restore the previous statusLine from the saved backup. Refuses
+              unless settings.json currently points at this binary. With no
+              backup recorded it removes the statusLine key instead.
   status      Print whether settings.json points at ccsb and show the
               current proxy/backup state.
   mode        Print the current mode (native or proxy) when invoked with no
@@ -401,14 +424,18 @@ Subcommands:
               Captures are diagnostic only and safe to remove at any time.
   doctor      Diagnose and auto-fix configuration problems: re-installs if
               settings.json is not hooked; switches to native mode if the
-              proxy command is circular, another ccsb binary, or cannot be
-              resolved to an executable. Resolution uses PATH, so a bare
-              command name like "npx" counts as found when it is installed.
-              It also reports — without changing them — an installed
-              ccsb-wizard skill that differs from this binary's copy, since
-              updating ccsb does not update a skill already written to
-              ~/.claude/skills/, and an update.auto that cannot fire because
-              no version segment in "rows" sets "check_update": true.
+              proxy command is circular or is another ccsb binary, both of
+              which would make ccsb call itself.
+              It also reports — without changing them — a proxy command that
+              cannot be resolved to an executable (resolution uses PATH, so a
+              bare name like "npx" counts as found when installed; an
+              unresolvable one is kept, because the same config on another
+              machine is not wrong and ccsb renders natively meanwhile), an
+              installed ccsb-wizard skill that differs from this binary's
+              copy, since updating ccsb does not update a skill already
+              written to ~/.claude/skills/, and an update.auto that cannot
+              fire because no version segment in "rows" sets
+              "check_update": true.
   update      Replace this binary with the newest GitHub release. Refuses
               on locally built binaries, Windows, and non-writable targets.
   install-skill   Extract the ccsb-wizard Claude Code skill to

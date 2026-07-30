@@ -26,8 +26,19 @@ import (
 // child that exec.CommandContext just SIGKILL'd.
 const cancelGracePeriod = 500 * time.Millisecond
 
+// ErrNotStarted marks a failure that happened BEFORE the child ran: the
+// command could not be resolved, or the fork/exec itself failed. It is
+// worth distinguishing because such a child cannot have written anything,
+// so a caller may safely fall back to its own rendering. A child that ran
+// and then failed carries no such guarantee — it may have emitted a
+// partial line already.
+var ErrNotStarted = errors.New("child never started")
+
 // Run spawns command with args, sends payload on its stdin and copies its
 // stdout/stderr to the supplied writers. ctx cancels the child.
+//
+// A failure to start is wrapped with ErrNotStarted; every other failure
+// (non-zero exit, timeout, cancellation) is not.
 func Run(ctx context.Context, command string, args []string, payload []byte, stdout, stderr io.Writer) error {
 	if command == "" {
 		return errors.New("proxy: empty command")
@@ -46,8 +57,15 @@ func Run(ctx context.Context, command string, args []string, payload []byte, std
 	cmd.Stderr = stderr
 	cmd.WaitDelay = cancelGracePeriod
 
-	if err := cmd.Run(); err != nil {
-		// exec.CommandContext SIGKILLs on expiry, so cmd.Run reports only
+	// Start and Wait are split rather than using cmd.Run so the two
+	// outcomes stay distinguishable: a child that never started wrote
+	// nothing, a child that started may have written a partial line.
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("proxy: %s: %w: %w", command, ErrNotStarted, err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		// exec.CommandContext SIGKILLs on expiry, so cmd.Wait reports only
 		// "signal: killed" — true but useless to someone whose bar went blank.
 		// Distinguish the deadline from a plain cancel (SIGINT/SIGTERM, which
 		// is not the proxy's fault) and say which limit was hit.

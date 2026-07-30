@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,33 @@ import (
 
 	"go.muehmer.eu/claude-cli-status-bar/internal/pkg/config"
 )
+
+// rescueBackup extracts the backup block from a config file that
+// config.Load could not parse, by decoding only the top level and then
+// only that one key. Everything else is left to fail as it should.
+//
+// It exists because backup.previous_status_line is not a setting: it is
+// the only copy of the statusLine ccsb displaced at install time. A parse
+// error anywhere else in the file — render.palette given as an object is
+// the documented case — used to take it down with the rest, and the next
+// uninstall then deleted the user's statusLine while reporting success.
+// Returns a zero Backup when the file is unreadable, is not even a JSON
+// object, or carries no usable backup key.
+func rescueBackup(path string) config.Backup {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return config.Backup{}
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return config.Backup{}
+	}
+	var b config.Backup
+	if err := json.Unmarshal(top["backup"], &b); err != nil {
+		return config.Backup{}
+	}
+	return b
+}
 
 // runConfig dispatches the `ccsb config <verb>` subcommand. Only verb so
 // far is "reset"; the function intentionally returns a hard error rather
@@ -55,14 +83,22 @@ func runConfigReset(p Paths, stdout io.Writer) error {
 	// the timestamped .bak file either way.
 	cfg, loadErr := config.Load(p.Config)
 
+	// A file too broken to parse still has to give up the uninstall
+	// backup — see rescueBackup. Read it before the rename, while the
+	// path still holds the original bytes.
+	keep := cfg.Backup
+	if loadErr != nil {
+		keep = rescueBackup(p.Config)
+	}
+
 	// RFC3339Nano makes the timestamp sortable and unambiguous; UTC
 	// removes the local-timezone surprise when reading backups later.
 	backupPath := p.Config + ".bak." + time.Now().UTC().Format(time.RFC3339Nano)
 	if err := os.Rename(p.Config, backupPath); err != nil {
 		return fmt.Errorf("ccsb: backup config: %w", err)
 	}
-	if loadErr == nil && len(cfg.Backup.PreviousStatusLine) > 0 {
-		if err := config.Save(p.Config, config.Config{Backup: cfg.Backup}); err != nil {
+	if len(keep.PreviousStatusLine) > 0 {
+		if err := config.Save(p.Config, config.Config{Backup: keep}); err != nil {
 			return fmt.Errorf("ccsb: preserve uninstall backup: %w", err)
 		}
 	}

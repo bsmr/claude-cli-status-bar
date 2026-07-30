@@ -242,3 +242,77 @@ func TestWizardAsset_ExplainsTheAutoUpdateDependency(t *testing.T) {
 	t.Error(`no paragraph of the wizard asset mentions "check_update" and "update.auto" together; ` +
 		"nothing tells the model that writing rows without the former disables the latter")
 }
+
+// Three claims the asset got wrong until 0.4.25, each verified against the
+// renderer rather than against prose. They are pinned the same way as the
+// update.auto dependency above — some paragraph must name both sides — so
+// the guard survives rewording but not a silent regression to the old,
+// wrong statement.
+//
+// The failure mode being prevented is specific: an AI writing a config from
+// this asset believed a typo'd segment type disappears (it prints ?type?),
+// that a row may carry align:"right" and still be Powerline (it cannot),
+// and that the update marker is always ↑ (it is ⚡ or ⊘ too).
+// proseParagraphs splits the asset into paragraphs with fenced code blocks
+// removed. A guard that means to scan PROSE must not be satisfiable by an
+// example: the align/Powerline case below passed while the paragraph it
+// guards was deleted, because the canonical config example happens to
+// contain both "align" and "powerline". Found by deleting the paragraph and
+// watching the test stay green.
+func proseParagraphs(asset string) []string {
+	var b strings.Builder
+	inFence := false
+	for _, line := range strings.Split(asset, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.Split(b.String(), "\n\n")
+}
+
+func TestWizardAsset_PinsBehaviourItPreviouslyMisstated(t *testing.T) {
+	paras := proseParagraphs(string(cli.WizardSkillContent()))
+	cases := []struct {
+		name  string
+		needs []string
+		why   string
+	}{
+		{
+			name:  "an unrecognised segment type is visible in the bar",
+			needs: []string{"`type`", "?"},
+			why:   "render.go renders an unknown type as ?<type>? and a missing one as ??, not as nothing",
+		},
+		{
+			name:  "row-level align right costs that row its Powerline",
+			needs: []string{"align", "owerline"},
+			why:   `render.go checks row.Align == "right" before the Powerline branch, so such a row renders plain`,
+		},
+		{
+			name:  "the update marker is not always the up arrow",
+			needs: []string{"⚡", "⊘"},
+			why:   "updateSeverityStyle uses ⚡ two or more majors ahead, and ⊘ whenever the update is blocked",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for _, para := range paras {
+				all := true
+				for _, n := range c.needs {
+					if !strings.Contains(para, n) {
+						all = false
+						break
+					}
+				}
+				if all {
+					return
+				}
+			}
+			t.Errorf("no paragraph of the wizard asset mentions %v together — %s", c.needs, c.why)
+		})
+	}
+}

@@ -736,3 +736,50 @@ func TestRun_ZeroProxyTimeoutImposesNoDeadline(t *testing.T) {
 		t.Errorf("proxy output: got %q, want %q", out.String(), "done")
 	}
 }
+
+func TestRun_UnstartableProxyFallsBackToNativeRender(t *testing.T) {
+	// A proxy command that cannot be started produced no output at all,
+	// so ccsb must render natively rather than exit non-zero — a non-zero
+	// exit makes Claude Code show no status bar whatsoever, which is a
+	// worse outcome than ignoring an unusable proxy.
+	ctx := context.Background()
+	in := strings.NewReader(`{"model":{"display_name":"Opus 5"},"workspace":{"current_dir":"/tmp/ccsb-x"}}`)
+	var out, errOut bytes.Buffer
+
+	err := statusline.Run(ctx, statusline.Options{
+		ProxyCommand: "/nonexistent/ccsb-test-binary",
+		NoColor:      true,
+	}, in, &out, &errOut)
+	if err != nil {
+		t.Fatalf("an unstartable proxy must not fail the run: %v", err)
+	}
+	if !strings.Contains(out.String(), "Opus 5") {
+		t.Errorf("expected a native render on stdout, got %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "/nonexistent/ccsb-test-binary") {
+		t.Errorf("the reason should be reported on stderr, got %q", errOut.String())
+	}
+}
+
+func TestRun_ProxyThatRanAndFailedStillPropagates(t *testing.T) {
+	// The counterpart, and the 0.4.15 boundary: a proxy that actually ran
+	// may have written a partial line, so ccsb must NOT render over it.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	ctx := context.Background()
+	in := strings.NewReader(`{"model":{"display_name":"Opus 5"}}`)
+	var out, errOut bytes.Buffer
+
+	err := statusline.Run(ctx, statusline.Options{
+		ProxyCommand: "sh",
+		ProxyArgs:    []string{"-c", "exit 3"},
+		NoColor:      true,
+	}, in, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected the error of a proxy that ran to propagate")
+	}
+	if strings.Contains(out.String(), "Opus 5") {
+		t.Errorf("must not render over a proxy that ran, got %q", out.String())
+	}
+}

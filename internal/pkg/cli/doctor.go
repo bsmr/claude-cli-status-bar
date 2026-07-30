@@ -19,9 +19,20 @@ import (
 )
 
 // proxyIssue returns a non-empty human-readable description when cmd is a
-// problematic proxy target relative to self. The three cases are: cmd equals
-// self (circular loop), cmd has the same base name as self (another ccsb
+// problematic proxy target relative to self, plus whether the problem
+// warrants clearing the proxy block. The three cases are: cmd equals self
+// (circular loop), cmd has the same base name as self (another ccsb
 // binary), and cmd cannot be resolved to an executable.
+//
+// Only the first two are cleared. They are genuine misconfigurations —
+// ccsb proxying to ccsb spawns itself on every status update — and no
+// later event makes them correct. An unresolvable target is different: the
+// same config on a second machine, or an invocation with a trimmed PATH,
+// produces it without anything being wrong with the user's intent, and
+// clearing it destroys a setting ccsb cannot reconstruct. It is therefore
+// reported and left alone. Nothing is at risk in leaving it: a proxy that
+// cannot start is caught in statusline.Run, which falls back to the native
+// renderer rather than exiting non-zero.
 //
 // Resolution goes through exec.LookPath, which is what actually launching the
 // proxy will do (proxy.Run -> exec.CommandContext). A bare command name is a
@@ -33,17 +44,17 @@ import (
 // LookPath also covers the path-like forms — a name containing a separator is
 // tried directly and PATH is not consulted — and additionally requires the
 // executable bit, which a proxy target needs anyway.
-func proxyIssue(cmd, self string) string {
+func proxyIssue(cmd, self string) (issue string, clear bool) {
 	switch {
 	case cmd == self:
-		return "proxy points to self (circular)"
+		return "proxy points to self (circular)", true
 	case filepath.Base(cmd) == filepath.Base(self):
-		return "proxy appears to be another ccsb binary"
+		return "proxy appears to be another ccsb binary", true
 	default:
 		if _, err := exec.LookPath(cmd); err != nil {
-			return "proxy target not found or not executable"
+			return "proxy target not found or not executable", false
 		}
-		return ""
+		return "", false
 	}
 }
 
@@ -160,7 +171,10 @@ func schemaCheck(captureDir string) schemaCheckResult {
 // upstream payload — but surfacing it explicitly helps explain a
 // surprising schema_health indicator.
 func runDoctor(p Paths, stdout io.Writer) error {
-	fixed := 0
+	// fixed counts what doctor changed; reported counts what it found and
+	// deliberately left alone. Keeping them apart is what lets the verdict
+	// below distinguish "clean" from "nothing I may touch".
+	fixed, reported := 0, 0
 
 	s, err := claudesettings.Load(p.Settings)
 	if err != nil {
@@ -179,7 +193,9 @@ func runDoctor(p Paths, stdout io.Writer) error {
 		return err
 	}
 	if cmd := cfg.Proxy.Command; cmd != "" {
-		if issue := proxyIssue(cmd, p.Self); issue != "" {
+		switch issue, clear := proxyIssue(cmd, p.Self); {
+		case issue == "":
+		case clear:
 			fmt.Fprintf(stdout, "ccsb: doctor: %s — switching to native mode\n", issue)
 			cfg.Proxy.Command = ""
 			cfg.Proxy.Args = nil
@@ -187,13 +203,26 @@ func runDoctor(p Paths, stdout io.Writer) error {
 				return err
 			}
 			fixed++
+		default:
+			// Reported, never repaired — like the stale skill copy and the
+			// inert update.auto, and so deliberately not counted as fixed.
+			fmt.Fprintf(stdout,
+				"ccsb: doctor: %s: %s — leaving the config alone; ccsb renders natively until it resolves\n",
+				issue, cmd)
+			reported++
 		}
 	}
 
-	if fixed == 0 {
-		fmt.Fprintln(stdout, "ccsb: doctor: no issues found")
-	} else {
+	// "no issues found" is reserved for a run that found nothing at all.
+	// It used to be printed whenever nothing was REPAIRED, which read as
+	// an all-clear directly underneath a problem doctor had just named.
+	switch {
+	case fixed > 0:
 		fmt.Fprintf(stdout, "ccsb: doctor: fixed %d issue(s)\n", fixed)
+	case reported > 0:
+		fmt.Fprintf(stdout, "ccsb: doctor: nothing repaired; %d finding(s) above are yours to decide on\n", reported)
+	default:
+		fmt.Fprintln(stdout, "ccsb: doctor: no issues found")
 	}
 
 	// Schema-check section — informational, never returns an error.

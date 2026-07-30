@@ -10,47 +10,10 @@ is captured to disk for later inspection, schema drift in the inbound JSON is
 detected and logged automatically, and a transparent proxy mode is available
 for compatibility with existing setups (see [Background](#background)).
 
-> **Status:** `0.4.24` — stable and actively developed (`0.3.0` added the
-> `ccsb-wizard` config skill; `0.4.0` added configurable bar glyphs,
-> per-part bar/label colour, token-fraction placement, and an opt-in
-> `git_dirty` segment; `0.4.4` added the `ccsb captures clean` verb; `0.4.8`
-> added the `ccsb update` self-updater and its `⊘` blocked indicator;
-> `0.4.10` added the opt-in `update.auto` config block that lets the
-> renderer run `ccsb update` for you; `0.4.11` closed two paths that could
-> destroy the statusLine ccsb had promised to restore; `0.4.12` stopped
-> `ccsb doctor` from deleting a proxy command it only failed to resolve;
-> `0.4.13` corrected the `ccsb-wizard` skill against the real config schema
-> and added tests that keep it there; `0.4.14` made `ccsb doctor` report an
-> installed skill copy that no longer matches the binary; `0.4.15` bounded
-> the proxy child, which could previously hang ccsb indefinitely; `0.4.16`
-> corrected documentation that had drifted from the code; `0.4.17` made
-> `ccsb doctor` report an `update.auto` that can never fire, `0.4.18`
-> taught the `ccsb-wizard` skill not to produce that configuration, and
-> `0.4.19` stopped filesystem content from writing escape sequences into
-> the bar, `0.4.20` fixed the capture filename, which could not be written
-> on Windows at all, `0.4.21` stopped config writes from dropping
-> top-level keys the running binary does not model, `0.4.22` made a bare
-> `ccsb` typed at a terminal print its usage instead of appearing to hang
-> while it waited for a payload, `0.4.23` made ccsb read the terminal
-> size from the `COLUMNS`/`LINES` environment variables Claude Code
-> provides, which also gives Windows real terminal-size detection for the
-> first time, and `0.4.24` stopped a size-less pty from masking every
-> later stage of that detection chain).
-> The native renderer is the
-> primary mode: a fully configurable Powerline pipeline with an
-> out-of-the-box default layout (model + mode + context bar + 5h/7d
-> rate-limit bars + git branch + lines diff + cwd + version stamp +
-> hidden-by-default schema-health indicator), per-segment right-align
-> and configurable bar widths, terminal-size detection with automatic
-> row-overflow reflow (segments marked `wrap: true` are lifted onto a
-> new row when the parent row would overflow), and a four-rung
-> schema-robustness ladder behind the indicator: per-segment
-> isolated payload parsing, automatic `.diag` drift logging,
-> persistent `schema_version` tracking, and a `ccsb doctor`
-> schema-drift diff against the most recent capture. Compatibility-mode
-> proxying to an existing `statusLine` command is supported as a
-> fallback and is seeded automatically by `ccsb install` when a
-> non-trivial existing entry is present.
+> **Status:** `0.4.24` — stable and actively developed. The native renderer
+> is the primary mode; proxying an existing `statusLine` command is a
+> compatibility fallback. [What it does](#what-it-does) covers the features,
+> [Roadmap](#roadmap) covers what each series added.
 
 ## What it does
 
@@ -63,7 +26,11 @@ for compatibility with existing setups (see [Background](#background)).
   mode glyph + context bar + 5h/7d rate-limit bars + a hidden-by-default
   schema-health indicator; row 2 carries git branch + lines diff + cwd
   and a right-aligned version stamp. Percentage segments escalate fg at
-  70 % (amber) and 90 % (red).
+  70 % (amber) and 90 % (red). Rows and individual segments can be
+  right-aligned, bar widths are configurable per segment, and the layout
+  reacts to the terminal width: a segment marked `wrap: true` is lifted
+  onto a new row when its row would overflow, and one marked `shrink: true`
+  yields width instead.
 - **Schema robustness** — per-segment isolated payload parsing contains
   any type error in one upstream field to that field only, so the rest of
   the bar keeps rendering. When the inbound JSON looks broken, a `.diag`
@@ -79,12 +46,20 @@ for compatibility with existing setups (see [Background](#background)).
   so input, output, and diagnostic can be paired.
 - **Hook management** — `ccsb install` swaps the `statusLine` entry in
   `~/.claude/settings.json` with the path to this binary and saves the
-  previous value verbatim; `ccsb uninstall` restores that value (the JSON
-  value, not the exact bytes — see below);
+  previous value verbatim. On a first install it also seeds the proxy
+  block from that previous entry, so an existing renderer keeps driving
+  the bar — unless the entry is the canonical `npx -y ccstatusline@latest`
+  or another ccsb binary, in which case install lands in native mode and
+  the backup is kept regardless. `ccsb uninstall` restores that value (the
+  JSON value, not the exact bytes — see below);
   `ccsb doctor` auto-installs if the hook drifted, switches to native
-  mode if the proxy target is circular or cannot be resolved to an
-  executable (resolved through `PATH`, so a bare `npx` counts as found),
-  and reports schema drift against the latest capture.
+  mode if the proxy target is circular or is another ccsb binary, and
+  reports schema drift against the latest capture. A proxy target that
+  merely cannot be resolved is reported and **kept**: resolution goes
+  through `PATH` (so a bare `npx` counts as found when installed), and a
+  target missing on this machine is not evidence the setting is wrong.
+  Nothing breaks meanwhile — a proxy that cannot start falls back to the
+  native renderer.
 - **Mode + config** — `ccsb mode native` clears the proxy block;
   `ccsb mode proxy [cmd args]` reinstates it (defaulting to the
   same command the install heuristic recognises, for symmetry);
@@ -96,7 +71,12 @@ for compatibility with existing setups (see [Background](#background)).
 - **Proxy mode (compatibility)** — when a proxy command is configured,
   ccsb forwards the stdin payload to it and prints its stdout verbatim.
   The child is bounded by `proxy.timeout` (default 10s, `"0"` disables)
-  so a proxy stalling on a dead network cannot hang the status bar.
+  so a proxy stalling on a dead network cannot hang the status bar. A
+  proxy that cannot be started at all — the command is missing on this
+  machine, or not executable — falls back to the native renderer, since
+  such a child wrote nothing and a blank bar helps nobody. A proxy that
+  *ran* and then failed or timed out does not fall back: it may have
+  emitted part of a line, and rendering over that would corrupt the bar.
   Useful for setups that already have a different statusLine renderer in
   place — ccsb sits in front of it for capture and schema-drift logging
   while the existing renderer keeps driving the visible bar.
@@ -108,7 +88,9 @@ for compatibility with existing setups (see [Background](#background)).
   download, not a compromised release — the checksum file ships from the
   same place as the archive). It refuses on Windows, on binaries built
   from a local checkout rather than installed from a tagged release, and
-  when the target directory is not writable; `ccsb doctor` names which.
+  when the target directory is not writable; the `version` segment shows
+  `⊘` instead of its update marker in that case, and `ccsb doctor` names
+  which reason applies.
   Upgrading *from* 0.4.7 or earlier is a manual download: those builds
   carried VCS metadata that `ccsb update` reads as a local build and
   refuses to overwrite, so they cannot update themselves. Swap the binary
@@ -330,21 +312,22 @@ truncated.
   git calls by refreshing a cached count out of band.
 
   *Keeping itself current*: the `version` segment flags available GitHub
-  releases with escalating colour, `ccsb update` installs them (verifying
-  the download against the release checksums, and refusing on Windows, on
-  local builds, and where the target directory is not writable), and the
+  releases with escalating colour, `ccsb update` installs them, and the
   opt-in `update.auto` config block lets the renderer do it unattended
-  within a version-jump ceiling you set. Because that chain has a
-  non-obvious dependency — it only fires from a layout that renders a
-  `version` segment with `check_update: true` — `ccsb doctor` reports an
-  `update.auto` that can never fire, and the `ccsb-wizard` skill knows not
-  to generate one.
+  within a version-jump ceiling you set. That automatic path has a
+  non-obvious dependency: its trigger lives in the `version` segment, so
+  it only fires from a layout that renders one with `check_update: true`.
+  `ccsb doctor` reports an `update.auto` left inert that way, and the
+  `ccsb-wizard` skill knows not to generate such a layout. Running
+  `ccsb update` by hand is unaffected.
 
   *Not losing your data*: `ccsb install` no longer risks the `statusLine`
-  entry it promised to restore, `ccsb doctor` no longer deletes a proxy
-  command it merely failed to resolve through `PATH`, config writes no
-  longer drop top-level keys the running binary does not model, and
-  capture filenames are now writable on Windows and bounded in length.
+  entry it promised to restore, `ccsb doctor` resolves a proxy command
+  through `PATH` before judging it missing — so a bare `npx` is no longer
+  cleared out of the config, though a target that genuinely cannot be
+  resolved still is — config writes no longer drop top-level keys the
+  running binary does not model, and capture filenames are now writable on
+  Windows and bounded in length.
   Text taken from the filesystem — a branch name, a directory name — is
   stripped of control characters before it reaches your terminal.
 

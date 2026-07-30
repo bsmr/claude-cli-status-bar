@@ -339,6 +339,111 @@ func TestInstall_LeavesSettingsUntouchedWhenBackupCannotBePersisted(t *testing.T
 // statusLine ccsb displaced and owes the user back. Renaming the whole config
 // file away takes that copy with it, so the later uninstall falls into the
 // "no previous" branch and deletes statusLine instead of restoring it.
+// The backup is write-once by design: uninstall owes the user the
+// statusLine ccsb ORIGINALLY displaced, not an intermediate one. The cost
+// is that a statusLine set after the first install is overwritten without
+// being saved anywhere — and until 0.4.25 ccsb printed a bare
+// "ccsb: installed" over it. Losing the user's bar silently is what 0.4.11
+// was about; the invariant stays, the silence does not.
+func TestInstall_SaysSoWhenItDiscardsAnUnsavedStatusLine(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"npx -y first-bar"}}`)
+
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	firstBackup := e.loadConfig(t).Backup.PreviousStatusLine
+
+	// The user re-points settings.json at a third command by hand.
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/opt/handcrafted/bar.sh --fancy"}}`)
+
+	buf.Reset()
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+
+	// The invariant is intact: the backup is still the FIRST statusLine.
+	if got := e.loadConfig(t).Backup.PreviousStatusLine; !bytes.Equal(got, firstBackup) {
+		t.Errorf("the write-once backup was modified:\ngot:  %s\nwant: %s", got, firstBackup)
+	}
+	// But the user is told what was thrown away.
+	out := buf.String()
+	if !strings.Contains(out, "/opt/handcrafted/bar.sh --fancy") {
+		t.Errorf("install discarded a statusLine without naming it:\n%s", out)
+	}
+	if !strings.Contains(out, "not saved") {
+		t.Errorf("install should say the discarded entry was not saved:\n%s", out)
+	}
+}
+
+func TestInstall_SaysNothingExtraOnAFirstInstall(t *testing.T) {
+	// The counterpart: on a first install the entry IS saved, so the
+	// warning must not appear — otherwise it would cry wolf every time.
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"npx -y first-bar"}}`)
+
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if strings.Contains(buf.String(), "not saved") {
+		t.Errorf("a first install saves the entry; no warning expected:\n%s", buf.String())
+	}
+}
+
+// The counterpart, and the hole 0.4.11 left: the carry-over only ran when
+// config.Load SUCCEEDED. A config too broken to parse — render.palette as
+// an object is the documented case — took the backup down with it, and the
+// next uninstall then deleted the statusLine while reporting success. A
+// parse error in an unrelated key must not cost the user the only copy of
+// the bar ccsb displaced.
+func TestConfigReset_PreservesUninstallBackupFromAnUnparsableConfig(t *testing.T) {
+	e := newEnv(t)
+	e.writeSettings(t, `{"statusLine":{"type":"command","command":"npx -y my-precious-bar"},"theme":"dark"}`)
+
+	var buf bytes.Buffer
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"install"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	want := e.loadConfig(t).Backup.PreviousStatusLine
+	if len(want) == 0 {
+		t.Fatal("install recorded no backup")
+	}
+
+	// Keep the backup block verbatim, but make the file unparsable.
+	broken := `{"backup":{"previous_status_line":` + string(want) + `},` +
+		`"render":{"palette":{"not":"an array"}}}`
+	if err := os.WriteFile(e.paths.Config, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(e.paths.Config); err == nil {
+		t.Fatal("fixture is not actually unparsable — the test would prove nothing")
+	}
+
+	buf.Reset()
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"config", "reset"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("config reset: %v", err)
+	}
+
+	if after := e.loadConfig(t); !bytes.Equal(after.Backup.PreviousStatusLine, want) {
+		t.Fatalf("backup lost when resetting an unparsable config:\ngot:  %s\nwant: %s",
+			after.Backup.PreviousStatusLine, want)
+	}
+
+	buf.Reset()
+	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"uninstall"}, nil, &buf, &buf); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	got, ok := claudesettings.GetStatusLine(e.loadSettings(t))
+	if !ok {
+		t.Fatal("uninstall deleted statusLine instead of restoring the rescued backup")
+	}
+	if !strings.Contains(string(got), "my-precious-bar") {
+		t.Errorf("restored the wrong statusLine: %s", got)
+	}
+}
+
 func TestConfigReset_PreservesUninstallBackup(t *testing.T) {
 	e := newEnv(t)
 	e.writeSettings(t, `{"statusLine":{"type":"command","command":"npx -y my-precious-bar"},"theme":"dark"}`)
@@ -888,17 +993,35 @@ func TestDoctor_FixesProxySameBasename(t *testing.T) {
 	}
 }
 
-func TestDoctor_FixesProxyNotFound(t *testing.T) {
+// Until 0.4.25 doctor DELETED a proxy block whose target it could not
+// resolve. That target is not evidence of a wrong configuration: the same
+// config on a machine without that binary produces it, and so does an
+// invocation with a trimmed PATH — while the deletion is permanent and
+// takes the arguments with it. Since 0.4.25 doctor reports it and leaves
+// it, which is safe because an unstartable proxy now falls back to the
+// native renderer instead of blanking the bar.
+func TestDoctor_ReportsProxyNotFoundButKeepsIt(t *testing.T) {
 	e := newEnv(t)
 	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
-	e.saveConfig(t, config.Config{Proxy: config.Proxy{Command: "/nonexistent/path/other-tool"}})
+	e.saveConfig(t, config.Config{Proxy: config.Proxy{
+		Command: "/nonexistent/path/other-tool", Args: []string{"--flag", "x"}}})
 
 	var out, errOut bytes.Buffer
 	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
-	if c := e.loadConfig(t); c.Proxy.Command != "" {
-		t.Errorf("doctor should have cleared proxy, got %q", c.Proxy.Command)
+	c := e.loadConfig(t)
+	if c.Proxy.Command != "/nonexistent/path/other-tool" {
+		t.Errorf("doctor cleared the proxy command: got %q", c.Proxy.Command)
+	}
+	if !reflect.DeepEqual(c.Proxy.Args, []string{"--flag", "x"}) {
+		t.Errorf("doctor lost the proxy args: got %v", c.Proxy.Args)
+	}
+	if !strings.Contains(out.String(), "not found or not executable") {
+		t.Errorf("doctor should still report the problem:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "switching to native mode") {
+		t.Errorf("doctor must not claim a mode switch it did not make:\n%s", out.String())
 	}
 }
 
@@ -937,8 +1060,11 @@ func TestDoctor_KeepsProxyCommandResolvedViaPath(t *testing.T) {
 }
 
 // The counterpart: consulting PATH must not turn the check into "accept
-// anything". A bare name that resolves nowhere is still a broken proxy.
-func TestDoctor_FixesProxyCommandMissingFromPath(t *testing.T) {
+// anything". A bare name that resolves nowhere is still reported as a
+// broken proxy — it is only the deletion that 0.4.25 dropped. Reporting
+// without repairing must also stay out of the "fixed N" tally, the same
+// rule the stale-skill and inert-update.auto diagnostics follow.
+func TestDoctor_ReportsProxyMissingFromPathWithoutCountingItFixed(t *testing.T) {
 	e := newEnv(t)
 	e.writeSettings(t, `{"statusLine":{"type":"command","command":"/usr/local/bin/ccsb-test"}}`)
 	t.Setenv("PATH", t.TempDir()) // empty: nothing resolves
@@ -948,8 +1074,21 @@ func TestDoctor_FixesProxyCommandMissingFromPath(t *testing.T) {
 	if err := cli.Run(context.Background(), e.paths, cli.Flags{}, []string{"doctor"}, nil, &out, &errOut); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
-	if c := e.loadConfig(t); c.Proxy.Command != "" {
-		t.Errorf("doctor should have cleared an unresolvable proxy, got %q", c.Proxy.Command)
+	if c := e.loadConfig(t); c.Proxy.Command != "definitely-not-on-path" {
+		t.Errorf("doctor cleared an unresolvable proxy: got %q", c.Proxy.Command)
+	}
+	if !strings.Contains(out.String(), "not found or not executable") {
+		t.Errorf("doctor should report the unresolvable target:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "fixed 1 issue") {
+		t.Errorf("a reported-not-repaired finding must not count as fixed:\n%s", out.String())
+	}
+	// Nor may it claim an all-clear: the finding is right above this line.
+	if strings.Contains(out.String(), "no issues found") {
+		t.Errorf("doctor reported a finding and then claimed no issues:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "nothing repaired") {
+		t.Errorf("expected the verdict to say nothing was repaired:\n%s", out.String())
 	}
 }
 

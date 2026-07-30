@@ -103,8 +103,10 @@ Available segment types:
 | `text` | Static label | any string |
 
 Each segment accepts:
-- `type`: **required** — one of the names above. A segment without it renders
-  nothing.
+- `type`: **required** — one of the names above. An unrecognised type is NOT
+  skipped: it renders as `?<type>?` in the bar, and a segment with no `type`
+  at all renders as `??`. A typo is therefore visible to the user rather than
+  silent — never emit a segment without a valid `type`.
 - `fg` / `bg`: a 256-color number as a **string**, `"0"`–`"255"`. Names are not
   supported — `"accent"` renders colourless.
 - `bold`: `true` / `false`
@@ -160,7 +162,11 @@ Percentage segments (`context`, `limit_5h`, `limit_7d`) additionally accept:
 
 The `version` segment additionally accepts:
 - `check_update`: `true` enables a background check against GitHub for a
-  newer release, appending `" (↑ v<latest>)"` when one exists. Defaults to
+  newer release, appending `" (<glyph> v<latest>)"` when one exists. The
+  glyph is `↑` for a patch, minor or single-major jump, `⚡` when the release
+  is two or more major versions ahead, and `⊘` whenever `ccsb update` cannot
+  install it anyway (Windows, a local build, an unwritable target) — the
+  colour escalates with the jump distance in every case. Defaults to
   `false` (the Go zero value) unless explicitly set — this is the one field
   where "the default" depends on which config you mean: ccsb's own shipped
   default layout sets it `true`, but any config the wizard writes or a user
@@ -187,6 +193,13 @@ Common accents: 196 red · 226 yellow · 46 green · 51 cyan · 21 blue · 135 p
 
 Layout: `render.rows` is an array of rows (top to bottom); each row has
 `segments` (left to right) and may set `bg`, `palette`, `caps`, `align`.
+
+**`align: "right"` on a ROW turns Powerline off for that row.** Right-aligned
+rows take a separate rendering path that is checked before the Powerline one,
+so such a row comes out plain — no background fill, no chevrons, no caps —
+even with `powerline: true` set. Use `align: "right"` on a SEGMENT (see the
+segment keys above) to push it rightwards inside a Powerline row; only reach
+for the row-level key when a deliberately plain right-aligned row is wanted.
 
 `render.palette` is an **array of colour strings**, not a name→colour object —
 writing an object makes ccsb fail to parse the config and the bar disappears.

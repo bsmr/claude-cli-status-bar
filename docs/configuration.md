@@ -993,9 +993,15 @@ proxy.
 
 On expiry the child is killed and ccsb exits non-zero, so Claude Code shows no
 status bar for that update, with `proxy: <cmd>: timed out after 10s` on stderr.
-That is the same outcome as any other proxy failure; it does **not** fall back
-to the native renderer, because the proxy may already have written part of a
-line and a second one would corrupt the output.
+It does **not** fall back to the native renderer, because the proxy may already
+have written part of a line and a second one would corrupt the output. The same
+holds for a proxy that ran and exited non-zero.
+
+Since `0.4.25` that is no longer true of *every* proxy failure. A proxy that
+never started — the command is missing on this machine, or is not executable —
+provably wrote nothing, so ccsb renders natively instead, reports the reason on
+stderr, and exits 0. The distinction is the guarantee, not the severity: only a
+child that never ran can be rendered over safely.
 
 An unparsable value falls back to the default rather than failing the config:
 losing the whole status bar over a typo in a timeout would be the worse
