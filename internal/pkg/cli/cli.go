@@ -414,9 +414,12 @@ Subcommands:
               timestamped .bak file) so the next run picks up the in-code
               defaults. The uninstall backup of your previous statusLine is
               carried over rather than reset — it is state ccsb owes you
-              back, not a setting. The only verb today; a no-op when no
-              config exists, and it still works on a config too broken
-              to parse.
+              back, not a setting. A no-op when no config exists, and it
+              still works on a config too broken to parse.
+              "config auto [level]" prints the highest version jump the
+              renderer may install by itself, or sets it: patch, minor,
+              major, or off to clear it. Setting a level also reports any
+              reason it cannot take effect (see doctor), without refusing.
   captures    "captures clean" removes capture files (.json payloads, .out
               rendered output, plus any .err and .diag siblings).
               Without arguments it empties the capture directory; with

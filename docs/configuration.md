@@ -296,6 +296,22 @@ A top-level block, sibling to `render` and `proxy`:
 { "update": { "auto": "patch" } }
 ```
 
+Since `0.4.26` there is a command for it, so this block rarely needs editing
+by hand:
+
+```bash
+ccsb config auto            # print the current level, or "off"
+ccsb config auto patch      # set it
+ccsb config auto off        # remove the update block again
+```
+
+What `ccsb config auto` prints can be typed straight back in, which is why the
+unset state prints `off` rather than "none". Setting a level also reports any
+reason it cannot take effect — an inert layout, or a binary that cannot
+self-update at all — but saves it regardless: the binary may be replaced by an
+installed release tomorrow, and the config should already be right. An
+unrecognised level is refused outright and leaves the file untouched.
+
 `auto` is the largest version jump ccsb may install by itself:
 
 | Value | Installs automatically |
