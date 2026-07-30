@@ -60,7 +60,9 @@ for compatibility with existing setups (see [Background](#background)).
   target missing on this machine is not evidence the setting is wrong.
   Nothing breaks meanwhile — a proxy that cannot start falls back to the
   native renderer.
-- **Mode + config** — `ccsb mode native` clears the proxy block;
+- **Mode + config** — `ccsb config auto [patch|minor|major|off]` prints or
+  sets the self-updater's ceiling (see below);
+  `ccsb mode native` clears the proxy block;
   `ccsb mode proxy [cmd args]` reinstates it (defaulting to the
   same command the install heuristic recognises, for symmetry);
   `ccsb mode` prints the active mode; `ccsb config reset` moves the
@@ -95,8 +97,9 @@ for compatibility with existing setups (see [Background](#background)).
   carried VCS metadata that `ccsb update` reads as a local build and
   refuses to overwrite, so they cannot update themselves. Swap the binary
   by hand once and self-update works from then on.
-  Set `{"update": {"auto": "patch"}}` in the config to let ccsb install
-  matching releases by itself; it is off unless you say so. It is not
+  Run `ccsb config auto patch` (or `minor`, `major`, `off`) to let ccsb
+  install matching releases by itself; it is off unless you say so, and
+  `ccsb config auto` on its own prints the current setting. It is not
   self-contained, though: the trigger lives in the `version` segment, so it
   only fires from a layout that renders one with `"check_update": true`.
   ccsb's own default layout does. A hand-written or wizard-generated `rows`

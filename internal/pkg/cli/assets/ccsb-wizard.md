@@ -238,6 +238,13 @@ which belong to ccsb:
   `update.auto` at all. Preserving the block is not enough; check the layout
   too.
 
+  Since `0.4.26` this one setting has its own command, so prefer telling the
+  user `ccsb config auto patch` (or `minor`, `major`, `off`) over editing the
+  block yourself — it validates the level, prints the current one when given
+  no argument, and warns when the setting cannot take effect. Rewrite the
+  block by hand only when you are already rewriting the config for other
+  reasons.
+
 So edit the file rather than replacing it. Read it first (Step 1), then use
 the Edit tool to change only the `render` block, or rebuild the whole document
 carrying `proxy`, `backup` and `update` over verbatim. Never `cat >` a document
